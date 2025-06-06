@@ -1,4 +1,4 @@
-"""Utility functions for VLM Spectrum."""
+"""Utility functions for VLM Spectra."""
 
 from .qwen_25_vl_utils import process_vision_info
 

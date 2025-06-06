@@ -1,5 +1,5 @@
 def main():
-    print("Hello from vlm-spectrum!")
+    print("Hello from vlm-spectra!")
 
 
 if __name__ == "__main__":

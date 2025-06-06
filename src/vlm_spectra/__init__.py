@@ -1,4 +1,4 @@
-"""VLM Spectrum - A toolkit for working with Vision-Language Models."""
+"""VLM Spectra - A toolkit for working with Vision-Language Models."""
 
 from .utils import process_vision_info
 

@@ -1,5 +1,5 @@
 import torch
-from vlm_spectrum.models.HookedVLM import HookedVLM
+from vlm_spectra.models.HookedVLM import HookedVLM
 import pytest
 
 from PIL import Image

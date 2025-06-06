@@ -2,8 +2,8 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import torch
 from PIL import Image
 
-from vlm_spectrum.models.model_prompts import UI_TARS_PROMPT
-from vlm_spectrum.utils.qwen_25_vl_utils import process_vision_info
+from vlm_spectra.models.model_prompts import UI_TARS_PROMPT
+from vlm_spectra.utils.qwen_25_vl_utils import process_vision_info
 
 SUPPORTED_QWEN_25_VL_MODELS = [
     "ByteDance-Seed/UI-TARS-1.5-7B",

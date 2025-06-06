@@ -1127,7 +1127,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vlm-spectrum"
+name = "vlm-spectra"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

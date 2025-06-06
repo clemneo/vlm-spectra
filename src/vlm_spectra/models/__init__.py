@@ -1,4 +1,4 @@
-"""Models subpackage for VLM Spectrum."""
+"""Models subpackage for VLM Spectra."""
 
 from .HookedVLM import HookedVLM
 
