@@ -3,4 +3,4 @@
 from .utils import process_vision_info
 
 __version__ = "0.1.0"
-__all__ = ["process_vision_info"] 
+__all__ = ["process_vision_info"]
