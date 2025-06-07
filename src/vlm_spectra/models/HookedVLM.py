@@ -13,8 +13,11 @@ SUPPORTED_MODELS = [
     *SUPPORTED_QWEN_25_VL_MODELS,
 ]
 
+
 class HookedVLM:
-    def __init__(self, model_name: str = "ByteDance-Seed/UI-TARS-1.5-7B", device: str = "cuda"):
+    def __init__(
+        self, model_name: str = "ByteDance-Seed/UI-TARS-1.5-7B", device: str = "cuda"
+    ):
         assert model_name in SUPPORTED_MODELS, f"Model {model_name} not supported"
         self.model_name = model_name
         self.device = device
@@ -24,9 +27,14 @@ class HookedVLM:
             )
             self.processor = AutoProcessor.from_pretrained(model_name)
             self.prompt = UI_TARS_PROMPT
-        
 
-    def generate(self, task: str, image: Image, max_new_tokens: int = 512, output_hidden_states: bool = False):
+    def generate(
+        self,
+        task: str,
+        image: Image,
+        max_new_tokens: int = 512,
+        output_hidden_states: bool = False,
+    ):
         inputs = self._prepare_messages(task, image)
         inputs = inputs.to(self.device)
 
@@ -37,9 +45,21 @@ class HookedVLM:
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
                 return_dict_in_generate=True,
-                output_hidden_states=output_hidden_states
+                output_hidden_states=output_hidden_states,
             )
 
+        return outputs
+
+    def forward(self, task: str, image: Image, output_hidden_states: bool = False):
+        inputs = self._prepare_messages(task, image)
+        inputs = inputs.to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model.forward(
+                **inputs,
+                output_hidden_states=output_hidden_states,
+                return_dict=True,
+            )
         return outputs
 
     def _prepare_messages(self, task: str, image: Image):
@@ -47,7 +67,12 @@ class HookedVLM:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": self.prompt.format(language="English", instruction=task)},
+                    {
+                        "type": "text",
+                        "text": self.prompt.format(
+                            language="English", instruction=task
+                        ),
+                    },
                     {
                         "type": "image",
                         "image": image,
@@ -71,4 +96,3 @@ class HookedVLM:
         )
 
         return inputs
-
