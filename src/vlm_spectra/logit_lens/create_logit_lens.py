@@ -1,4 +1,4 @@
-# From https://github.com/clemneo/llava-interp/blob/main/src/lvlm_lens.py
+# Adapted from https://github.com/clemneo/llava-interp/blob/main/src/lvlm_lens.py
 
 import torch
 import json
@@ -6,85 +6,149 @@ from pathlib import Path
 import base64
 from io import BytesIO
 from PIL import Image
+from typing import List, Tuple, Dict, Union, Optional
 
 
-def create_interactive_logit_lens(
-    hidden_states,
-    norm,
-    lm_head,
+def create_logit_lens(
+    hidden_states: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
+    norm: torch.nn.Module,
+    lm_head: torch.nn.Module,
     tokenizer,
-    image,
-    model_name,
-    image_filename,
-    prompt,
-    save_folder=".",
-    image_size=336,
-    patch_size=14,
-    misc_text="",
-):
-    # Tokenize the prompt
-    input_ids = tokenizer.encode(prompt)
-
-    # Find the image token and replace it with image tokens
-    img_token_id = 32000  # The token ID for <img>
-    img_token_count = (
-        image_size // patch_size
-    ) ** 2  # 576 for 336x336 image with 14x14 patches
-
-    token_labels = []
-    for token_id in input_ids:
-        if token_id == img_token_id:
-            # One indexed because the HTML logic wants it that way
-            token_labels.extend([f"<IMG{(i + 1):03d}>" for i in range(img_token_count)])
-        else:
-            token_labels.append(tokenizer.decode([token_id]))
-
-    # Exclude the input embedding layer if it's included
+    image: Image.Image,
+    token_labels: List[str],
+    image_size: Tuple[int, int],
+    grid_size: Tuple[int, int],
+    patch_size: int,
+    model_name: str,
+    image_filename: str,
+    prompt: str,
+    save_folder: str = ".",
+    misc_text: str = ""
+) -> None:
+    """
+    Create an interactive logit lens visualization for any VLM.
+    
+    Args:
+        hidden_states: Hidden states from the model (either tensor or tuple of tensors)
+        norm: Normalization layer
+        lm_head: Language model head
+        tokenizer: Tokenizer
+        image: Original PIL Image
+        token_labels: List of labels for each token (e.g., ["<IMG001>", "<IMG002>", "Hello", ...])
+        image_size: Tuple of (width, height) for the processed image
+        grid_size: Tuple of (grid_height, grid_width) for the patch grid
+        patch_size: Size of each patch in pixels
+        model_name: Name of the model
+        image_filename: Filename of the image
+        prompt: The prompt used
+        save_folder: Folder to save the output
+        misc_text: Additional text to display
+    """
+    
+    # Convert hidden states to consistent format
+    if isinstance(hidden_states, tuple):
+        # Stack all hidden states from all layers
+        hidden_states_list = []
+        for hs in hidden_states:
+            if hs is not None:
+                # Handle batch dimension if present
+                if hs.dim() == 3:
+                    hs = hs.squeeze(0)
+                hidden_states_list.append(hs)
+        hidden_states = torch.stack(hidden_states_list)
+    elif hidden_states.dim() == 4:  # (num_layers, batch_size, seq_len, hidden_size)
+        hidden_states = hidden_states.squeeze(1)  # Remove batch dimension
+    
     num_layers = len(hidden_states)
-    sequence_length = hidden_states[0].size(1)
-
+    sequence_length = hidden_states[0].size(0)
+    
+    # Ensure we have labels for all positions
+    if len(token_labels) != sequence_length:
+        print(f"Warning: token_labels length ({len(token_labels)}) doesn't match sequence length ({sequence_length})")
+        # Pad or truncate token_labels
+        if len(token_labels) < sequence_length:
+            token_labels.extend(['<UNK>'] * (sequence_length - len(token_labels)))
+        else:
+            token_labels = token_labels[:sequence_length]
+    
+    # Process hidden states to get top tokens
     all_top_tokens = []
-
+    
     for layer in range(num_layers):
         layer_hidden_states = hidden_states[layer]
-
+        
         # Apply norm and lm_head
         normalized = norm(layer_hidden_states)
         logits = lm_head(normalized)
-
+        
         # Get probabilities
         probs = torch.softmax(logits, dim=-1)
-
-        # Get top 5 tokens and their probabilities for each position
+        
+        # Get top 5 tokens and their probabilities
         top_5_values, top_5_indices = torch.topk(probs, k=5, dim=-1)
-
+        
         layer_top_tokens = []
         for pos in range(sequence_length):
-            top_5_tokens = [
-                tokenizer.decode(idx.item()) for idx in top_5_indices[0, pos]
-            ]
-            top_5_probs = [f"{prob.item():.4f}" for prob in top_5_values[0, pos]]
+            top_5_tokens = [tokenizer.decode(idx.item()) for idx in top_5_indices[pos]]
+            top_5_probs = [f"{prob.item():.4f}" for prob in top_5_values[pos]]
             layer_top_tokens.append(list(zip(top_5_tokens, top_5_probs)))
-
+        
         all_top_tokens.append(layer_top_tokens)
-
-    # Process the image: central crop and resize
-    img_w, img_h = image.size
-    min_dim = min(img_w, img_h)
-    left = (img_w - min_dim) / 2
-    top = (img_h - min_dim) / 2
-    right = (img_w + min_dim) / 2
-    bottom = (img_h + min_dim) / 2
-    image_cropped = image.crop((left, top, right, bottom))
-    image_resized = image_cropped.resize((image_size, image_size), Image.LANCZOS)
-
+    
+    # Resize image to match the processed size
+    image_width, image_height = image_size
+    image_resized = image.resize((image_width, image_height), Image.LANCZOS)
+    
     # Convert image to base64
     buffered = BytesIO()
     image_resized.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
-
+    
+    # Generate metadata text
+    grid_h, grid_w = grid_size
+    metadata_text = f"Grid: {grid_h}×{grid_w} patches, Patch size: {patch_size}×{patch_size}px"
+    if misc_text:
+        metadata_text += f"<br>{misc_text}"
+    
     # Generate HTML
-    html_content = """
+    html_content = _generate_html(
+        img_str=img_str,
+        data=all_top_tokens,
+        token_labels=token_labels,
+        image_width=image_width,
+        image_height=image_height,
+        grid_h=grid_h,
+        grid_w=grid_w,
+        patch_size=patch_size,
+        prompt=prompt,
+        metadata_text=metadata_text
+    )
+    
+    # Save to file
+    output_filename = f"{model_name}_{Path(image_filename).stem}_logit_lens.html"
+    output_path = Path(save_folder) / output_filename
+    
+    with open(output_path, 'w') as f:
+        f.write(html_content)
+    
+    print(f"Interactive logit lens HTML has been saved to: {output_path}")
+
+
+def _generate_html(
+    img_str: str,
+    data: List,
+    token_labels: List[str],
+    image_width: int,
+    image_height: int,
+    grid_h: int,
+    grid_w: int,
+    patch_size: int,
+    prompt: str,
+    metadata_text: str
+) -> str:
+    """Generate the HTML content for logit lens visualization"""
+    
+    html_template = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -98,7 +162,7 @@ def create_interactive_logit_lens(
             flex: 0 0 auto; 
             margin: 20px; 
             position: relative;
-            width: 336px; /* Set to match image width */
+            width: ${image_width}px;
         }
         .highlight-box {
             position: absolute;
@@ -173,17 +237,22 @@ def create_interactive_logit_lens(
         .instructions {
             font-style: italic;
         }
+        .metadata {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="image-container">
-            <img src="data:image/png;base64,IMAGEPLACEHOLDER" alt="Input Image" style="width: 336px; height: 336px;">
+            <img src="data:image/png;base64,${img_str}" alt="Input Image" style="width: ${image_width}px; height: ${image_height}px;">
             <div class="highlight-box"></div>
             <div class="image-info">
-                <p class="prompt">Prompt: "PROMPTPLACEHOLDER"</p>
+                <p class="prompt">Prompt: "${prompt}"</p>
                 <p class="instructions">Instructions: Click on image to lock the patch, click on image/table to unlock</p>
-                <p>Info: MISCPLACEHOLDER</p>
+                <p class="metadata">${metadata_text}</p>
             </div>
         </div>
         <div class="table-container">
@@ -192,22 +261,24 @@ def create_interactive_logit_lens(
     </div>
     <div id="tooltip"></div>
 <script>
-    const data = DATAPLACEMENT;
-    const tokenLabels = TOKENLABELSPLACEMENT;
+    const data = ${json.dumps(data)};
+    const tokenLabels = ${json.dumps(token_labels)};
     const tooltip = document.getElementById('tooltip');
     const highlightBox = document.querySelector('.highlight-box');
     const image = document.querySelector('.image-container img');
     const table = document.getElementById('logitLens');
     
-    const imageSize = IMAGESIZEPLACEHOLDER;
-    const patchSize = PATCHSIZEPLACEHOLDER;
-    const gridSize = imageSize / patchSize;
+    const imageWidth = ${image_width};
+    const imageHeight = ${image_height};
+    const gridH = ${grid_h};
+    const gridW = ${grid_w};
+    const patchSize = ${patch_size};
     
     let isLocked = false;
     let highlightedRow = null;
     let lockedPatchIndex = null;
     
-    // Create corner header
+    // Create table
     const cornerHeader = table.createTHead().insertRow();
     cornerHeader.insertCell().textContent = 'Token/Layer';
     cornerHeader.cells[0].classList.add('corner-header');
@@ -293,9 +364,9 @@ def create_interactive_logit_lens(
     }
     
     function highlightImagePatch(patchIndex) {
-        const scaleFactor = image.width / imageSize;
-        const row = Math.floor((patchIndex - 1) / gridSize);
-        const col = (patchIndex - 1) % gridSize;
+        const scaleFactor = image.width / imageWidth;
+        const row = Math.floor((patchIndex - 1) / gridW);
+        const col = (patchIndex - 1) % gridW;
         
         const left = col * patchSize * scaleFactor;
         const top = row * patchSize * scaleFactor;
@@ -329,10 +400,12 @@ def create_interactive_logit_lens(
     image.addEventListener('mousemove', (e) => {
         if (!isLocked) {
             const patchIndex = getPatchIndexFromMouseEvent(e);
-            highlightImagePatch(patchIndex);
-            const tokenIndex = getTokenIndexFromPatchIndex(patchIndex);
-            if (tokenIndex !== -1) {
-                showTooltip(e, 0, tokenIndex, true);
+            if (patchIndex > 0 && patchIndex <= gridH * gridW) {
+                highlightImagePatch(patchIndex);
+                const tokenIndex = getTokenIndexFromPatchIndex(patchIndex);
+                if (tokenIndex !== -1) {
+                    showTooltip(e, 0, tokenIndex, true);
+                }
             }
         }
     });
@@ -347,10 +420,12 @@ def create_interactive_logit_lens(
         isLocked = !isLocked;
         if (isLocked) {
             lockedPatchIndex = getPatchIndexFromMouseEvent(e);
-            highlightImagePatch(lockedPatchIndex);
-            const tokenIndex = getTokenIndexFromPatchIndex(lockedPatchIndex);
-            if (tokenIndex !== -1) {
-                highlightTableRow(tokenIndex, true);
+            if (lockedPatchIndex > 0 && lockedPatchIndex <= gridH * gridW) {
+                highlightImagePatch(lockedPatchIndex);
+                const tokenIndex = getTokenIndexFromPatchIndex(lockedPatchIndex);
+                if (tokenIndex !== -1) {
+                    highlightTableRow(tokenIndex, true);
+                }
             }
         } else {
             lockedPatchIndex = null;
@@ -368,9 +443,10 @@ def create_interactive_logit_lens(
         const rect = image.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        const patchX = Math.floor(x / (image.width / gridSize));
-        const patchY = Math.floor(y / (image.height / gridSize));
-        return patchY * gridSize + patchX + 1;
+        const scaleFactor = imageWidth / image.width;
+        const patchX = Math.floor(x * scaleFactor / patchSize);
+        const patchY = Math.floor(y * scaleFactor / patchSize);
+        return patchY * gridW + patchX + 1;
     }
 
     function getTokenIndexFromPatchIndex(patchIndex) {
@@ -380,26 +456,17 @@ def create_interactive_logit_lens(
 </body>
 </html>
     """
-
-    # Replace placeholders
-    html_content = html_content.replace("IMAGEPLACEHOLDER", img_str)
-    html_content = html_content.replace("DATAPLACEMENT", json.dumps(all_top_tokens))
-    html_content = html_content.replace(
-        "TOKENLABELSPLACEMENT", json.dumps(token_labels)
-    )
-    html_content = html_content.replace("IMAGESIZEPLACEHOLDER", str(image_size))
-    html_content = html_content.replace("PATCHSIZEPLACEHOLDER", str(patch_size))
-    html_content = html_content.replace("PROMPTPLACEHOLDER", prompt)  # Add this line
-    html_content = html_content.replace("MISCPLACEHOLDER", misc_text)  # Add this line
-
-    # Create filename using model name and image filename
-    output_filename = f"{model_name}_{Path(image_filename).stem}_logit_lens.html"
-
-    # Join save folder and filename
-    output_path = Path(save_folder) / output_filename
-
-    # Write to file
-    with open(output_path, "w") as f:
-        f.write(html_content)
-
-    print(f"Interactive logit lens HTML has been saved to: {output_path}")
+    
+    # Use string template substitution
+    html_content = html_template.replace('${img_str}', img_str)
+    html_content = html_content.replace('${json.dumps(data)}', json.dumps(data))
+    html_content = html_content.replace('${json.dumps(token_labels)}', json.dumps(token_labels))
+    html_content = html_content.replace('${image_width}', str(image_width))
+    html_content = html_content.replace('${image_height}', str(image_height))
+    html_content = html_content.replace('${grid_h}', str(grid_h))
+    html_content = html_content.replace('${grid_w}', str(grid_w))
+    html_content = html_content.replace('${patch_size}', str(patch_size))
+    html_content = html_content.replace('${prompt}', prompt.replace('"', '\\"'))
+    html_content = html_content.replace('${metadata_text}', metadata_text)
+    
+    return html_content

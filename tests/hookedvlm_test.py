@@ -71,5 +71,11 @@ def test_forward_with_output_hidden_states(model):
     )  # the tensor of shape (batch_size, sequence_length, hidden_size)
 
 
+def test_get_model_components(model):
+    components = model.get_model_components()
+    assert type(components) is dict
+    assert len(components) > 0
+
+
 if __name__ == "__main__":
     test_hookedvlm()

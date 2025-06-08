@@ -96,3 +96,15 @@ class HookedVLM:
         )
 
         return inputs
+
+
+    def get_model_components(self):
+        """Get model components needed for logit lens"""
+        model_to_components = {
+            Qwen2_5_VLForConditionalGeneration: {
+                'norm': self.model.language_model.norm,
+                'lm_head': self.model.lm_head,
+                'tokenizer': self.processor.tokenizer,
+            }
+        }
+        return model_to_components[type(self.model)]
