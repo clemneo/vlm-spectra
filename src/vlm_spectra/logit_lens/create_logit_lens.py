@@ -323,9 +323,13 @@ def _generate_html(
         updateTooltipPosition(e);
         
         if (tokenLabels[pos].startsWith('<IMG')) {
-            const patchIndex = parseInt(tokenLabels[pos].slice(4, 7));
-            highlightImagePatch(patchIndex);
-            highlightTableRow(pos, shouldScroll);
+            // Extract the number from token format like <IMG001> or <IMG1000>
+            const match = tokenLabels[pos].match(/<IMG(\d+)>/);
+            if (match) {
+                const patchIndex = parseInt(match[1]);
+                highlightImagePatch(patchIndex);
+                highlightTableRow(pos, shouldScroll);
+            }
         } else {
             highlightBox.style.display = 'none';
             unhighlightTableRow();
@@ -450,7 +454,11 @@ def _generate_html(
     }
 
     function getTokenIndexFromPatchIndex(patchIndex) {
-        return tokenLabels.findIndex(label => label === `<IMG${patchIndex.toString().padStart(3, '0')}>`);
+        // Create the expected token label format matching Python's f"<IMG{(img_token_counter+1):03d}>"
+        // Python's :03d pads with zeros to minimum 3 digits, but doesn't truncate longer numbers
+        const paddedIndex = patchIndex.toString().padStart(3, '0');
+        const expectedLabel = `<IMG${paddedIndex}>`;
+        return tokenLabels.findIndex(label => label === expectedLabel);
     }
 </script>
 </body>
