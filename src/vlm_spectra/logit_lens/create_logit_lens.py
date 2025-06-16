@@ -394,6 +394,11 @@ def _generate_html(
         }
     }
 
+    function scrollTableToRight() {
+        const tableContainer = document.querySelector('.table-container');
+        tableContainer.scrollLeft = tableContainer.scrollWidth;
+    }
+
     function unhighlightTableRow() {
         if (highlightedRow) {
             highlightedRow.classList.remove('highlighted-row');
@@ -409,6 +414,7 @@ def _generate_html(
                 const tokenIndex = getTokenIndexFromPatchIndex(patchIndex);
                 if (tokenIndex !== -1) {
                     showTooltip(e, 0, tokenIndex, true);
+                    scrollTableToRight();
                 }
             }
         }
