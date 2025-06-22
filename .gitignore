@@ -12,5 +12,8 @@ wheels/
 # Pytest
 .pytest_cache/
 
+# Test files
+tests/tmp/
+
 # Ruff
 .ruff_cache/

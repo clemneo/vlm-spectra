@@ -4,11 +4,13 @@ import pytest
 
 from PIL import Image
 import numpy as np
+import os
 
 MODEL_NAMES = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
 ]
 
+SAVE_FILES = True
 
 @pytest.fixture(scope="session", params=MODEL_NAMES)
 def model(request):
@@ -22,6 +24,14 @@ def generate_random_image(width=224, height=224, num_channels=3):
     random_image = Image.fromarray(random_array)
     return random_image
 
+
+def generate_checkered_image(width=224, height=224, num_channels=3, checkered_size=14):
+    image = Image.new("RGB", (width, height))
+    for x in range(0, width, checkered_size):
+        for y in range(0, height, checkered_size):
+            color = (255, 255, 255) if (x + y) % (checkered_size * 2) < checkered_size else (0, 0, 0)
+            image.paste(color, (x, y, x + checkered_size, y + checkered_size))
+    return image
 
 def test_hookedvlm(model):
     assert model is not None
@@ -75,6 +85,74 @@ def test_get_model_components(model):
     components = model.get_model_components()
     assert type(components) is dict
     assert len(components) > 0
+
+
+@pytest.mark.parametrize("multiplier", [8, 16, 24])
+def test_generate_patch_overview(model, multiplier):
+    # Generate checkered image
+    patch_size = 14
+    image = generate_checkered_image(width=patch_size*multiplier, height=patch_size*multiplier)
+
+    # Verify that in the image, there are an equal number of black and white pixels
+    image_array = np.array(image)
+    black_pixels = (image_array == 0).sum()
+    white_pixels = (image_array == 255).sum()
+    assert black_pixels == white_pixels
+    
+    # Get inputs to count image tokens
+    inputs = model._prepare_messages("Describe the image.", image)
+    
+    # Count image tokens
+    input_ids = inputs['input_ids'].squeeze(0)
+    image_token_id = model.processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+    num_image_tokens = (input_ids == image_token_id).sum().item()
+    
+    print(f"Number of image tokens for multiplier {multiplier}: {num_image_tokens}")
+    
+    # Generate patch overview using the method we'll implement
+    output_image = model.generate_patch_overview(image, with_labels=False)
+    
+    # Verify we got an Image back
+    assert isinstance(output_image, Image.Image)
+
+    # Verify that in the output image, there are an equal number of black and white pixels
+    output_image_array = np.array(output_image)
+    
+    # Remove red pixels (RGB where R=255, G=0, B=0) before counting
+    # Create a mask for red pixels
+    red_pixels_mask = (output_image_array[:, :, 0] == 255) & (output_image_array[:, :, 1] == 0) & (output_image_array[:, :, 2] == 0)
+    
+    # Create a copy of the array and set red pixels to a neutral color (e.g., gray) so they don't interfere with counting
+    counting_array = output_image_array.copy()
+    counting_array[red_pixels_mask] = [128, 128, 128]  # Set red pixels to gray
+    
+    # Now count black and white pixels
+    black_pixels = (counting_array == 0).sum()
+    white_pixels = (counting_array == 255).sum()
+    assert black_pixels == white_pixels
+
+    output_image_with_labels = model.generate_patch_overview(image, with_labels=True)
+    output_image_with_labels_array = np.array(output_image_with_labels)
+    # make sure there are more red pixels in the image with labels
+    red_pixels_mask_with_labels = (output_image_with_labels_array[:, :, 0] == 255) & (output_image_with_labels_array[:, :, 1] == 0) & (output_image_with_labels_array[:, :, 2] == 0)
+    assert red_pixels_mask_with_labels.sum() > red_pixels_mask.sum()
+    
+    
+    # Save the image to verify it worked
+    if SAVE_FILES:
+        os.makedirs("tests/tmp", exist_ok=True)
+
+        output_path = f"tests/tmp/test_patch_overview_mult{multiplier}.png"
+        output_image.save(output_path)
+        assert os.path.exists(output_path)
+
+        output_path_with_labels = f"tests/tmp/test_patch_overview_with_labels_mult{multiplier}.png"
+        output_image_with_labels.save(output_path_with_labels)
+        assert os.path.exists(output_path_with_labels)
+
+        output_path_original = f"tests/tmp/test_patch_overview_original_mult{multiplier}.png"
+        image.save(output_path_original)
+        assert os.path.exists(output_path_original)
 
 
 if __name__ == "__main__":
