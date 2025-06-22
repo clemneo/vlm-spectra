@@ -61,8 +61,19 @@ class HookedVLM:
                 return_dict=True,
             )
         return outputs
+    
+    def forward_using_inputs(self, inputs, output_hidden_states: bool = False):
+        inputs = inputs.to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model.forward(
+                **inputs,
+                output_hidden_states=output_hidden_states,
+                return_dict=True,
+            )
+        return outputs
 
-    def _prepare_messages(self, task: str, image: Image):
+    def _prepare_messages(self, task: str, image: Image, append_text: str = "", return_text: bool = False):
         messages = [
             {
                 "role": "user",
@@ -86,6 +97,9 @@ class HookedVLM:
             messages, tokenize=False, add_generation_prompt=True
         )
 
+        if append_text:
+            text += append_text
+
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = self.processor(
             text=[text],
@@ -95,7 +109,10 @@ class HookedVLM:
             return_tensors="pt",
         )
 
-        return inputs
+        if return_text:
+            return inputs, text
+        else:
+            return inputs
 
 
     def get_model_components(self):
