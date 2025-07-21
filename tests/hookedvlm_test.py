@@ -39,14 +39,16 @@ def test_hookedvlm(model):
 
 def test_generate(model):
     image = generate_random_image()
-    outputs = model.generate("Describe the image.", image)
+    inputs = model.prepare_messages("Describe the image.", image)
+    outputs = model.generate(inputs)
 
     assert type(outputs.sequences) is torch.Tensor
 
 
 def test_generate_with_output_hidden_states(model):
     image = generate_random_image()
-    outputs = model.generate("Describe the image.", image, output_hidden_states=True)
+    inputs = model.prepare_messages("Describe the image.", image)
+    outputs = model.generate(inputs, output_hidden_states=True)
 
     assert (
         type(outputs.hidden_states) is tuple
@@ -63,13 +65,15 @@ def test_generate_with_output_hidden_states(model):
 
 def test_forward(model):
     image = generate_random_image()
-    outputs = model.forward("Describe the image.", image)
+    inputs = model.prepare_messages("Describe the image.", image)
+    outputs = model.forward(inputs)
     assert type(outputs.logits) is torch.Tensor
 
 
 def test_forward_with_output_hidden_states(model):
     image = generate_random_image()
-    outputs = model.forward("Describe the image.", image, output_hidden_states=True)
+    inputs = model.prepare_messages("Describe the image.", image)
+    outputs = model.forward(inputs, output_hidden_states=True)
 
     assert type(outputs.logits) is torch.Tensor
 
@@ -100,7 +104,7 @@ def test_generate_patch_overview(model, multiplier):
     assert black_pixels == white_pixels
     
     # Get inputs to count image tokens
-    inputs = model._prepare_messages("Describe the image.", image)
+    inputs = model.prepare_messages("Describe the image.", image)
     
     # Count image tokens
     input_ids = inputs['input_ids'].squeeze(0)

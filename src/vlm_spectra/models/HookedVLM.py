@@ -31,14 +31,16 @@ class HookedVLM:
 
     def generate(
         self,
-        task: str,
-        image: Image,
+        inputs,
         max_new_tokens: int = 512,
         output_hidden_states: bool = False,
     ):
-        inputs = self._prepare_messages(task, image)
-        inputs = inputs.to(self.device)
+        """Prepare inputs with:
 
+        `inputs = self._prepare_messages(task, image)`
+        """
+
+        inputs = inputs.to(self.device)
         self.model.eval()
         with torch.no_grad():
             outputs = self.model.generate(
@@ -51,21 +53,9 @@ class HookedVLM:
 
         return outputs
 
-    def forward(self, task: str, image: Image, output_hidden_states: bool = False):
-        inputs = self._prepare_messages(task, image)
-        inputs = inputs.to(self.device)
+    def forward(self, inputs, output_hidden_states: bool = False):
         self.model.eval()
-        with torch.no_grad():
-            outputs = self.model.forward(
-                **inputs,
-                output_hidden_states=output_hidden_states,
-                return_dict=True,
-            )
-        return outputs
-    
-    def forward_using_inputs(self, inputs, output_hidden_states: bool = False):
         inputs = inputs.to(self.device)
-        self.model.eval()
         with torch.no_grad():
             outputs = self.model.forward(
                 **inputs,
@@ -74,7 +64,7 @@ class HookedVLM:
             )
         return outputs
 
-    def _prepare_messages(self, task: str, image: Image, append_text: str = "", return_text: bool = False):
+    def prepare_messages(self, task: str, image: Image, append_text: str = "", return_text: bool = False):
         messages = [
             {
                 "role": "user",
