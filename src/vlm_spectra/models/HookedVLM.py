@@ -2,6 +2,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import torch
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+from contextlib import nullcontext
 
 from vlm_spectra.models.model_prompts import UI_TARS_PROMPT
 from vlm_spectra.utils.qwen_25_vl_utils import process_vision_info, smart_resize, IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS
@@ -17,32 +18,39 @@ SUPPORTED_MODELS = [
 
 class HookedVLM:
     def __init__(
-        self, model_name: str = "ByteDance-Seed/UI-TARS-1.5-7B", device: str = "cuda"
+        self, model_name: str = "ByteDance-Seed/UI-TARS-1.5-7B", device: str = "auto"
     ):
         assert model_name in SUPPORTED_MODELS, f"Model {model_name} not supported"
         self.model_name = model_name
-        self.device = device
         if model_name == "ByteDance-Seed/UI-TARS-1.5-7B":
             self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                model_name, torch_dtype=torch.bfloat16, device_map="auto"
+                model_name, torch_dtype=torch.bfloat16, device_map=device
             )
             self.processor = AutoProcessor.from_pretrained(model_name)
             self.prompt = UI_TARS_PROMPT
+        
+        if device == "auto":
+            self.device = next(self.model.parameters()).device # Get the device of the first param
+        else:
+            self.device = device
 
     def generate(
         self,
         inputs,
         max_new_tokens: int = 512,
         output_hidden_states: bool = False,
+        require_grads: bool = False,
     ):
         """Prepare inputs with:
 
         `inputs = self._prepare_messages(task, image)`
         """
 
-        inputs = inputs.to(self.device)
+        inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
         self.model.eval()
-        with torch.no_grad():
+        if require_grads:
+            self.model.requires_grad_(True)
+        with torch.no_grad() if not require_grads else nullcontext():
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
@@ -53,10 +61,14 @@ class HookedVLM:
 
         return outputs
 
-    def forward(self, inputs, output_hidden_states: bool = False):
+    def forward(self, inputs, output_hidden_states: bool = False, require_grads: bool = False):
+        inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
+        if self.device != "auto":   
+            inputs = inputs.to(self.device)
         self.model.eval()
-        inputs = inputs.to(self.device)
-        with torch.no_grad():
+        if require_grads:
+            self.model.requires_grad_(True)
+        with torch.no_grad() if not require_grads else nullcontext():
             outputs = self.model.forward(
                 **inputs,
                 output_hidden_states=output_hidden_states,
