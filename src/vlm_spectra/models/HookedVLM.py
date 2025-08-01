@@ -2,7 +2,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import torch
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 
 from vlm_spectra.models.model_prompts import UI_TARS_PROMPT
 from vlm_spectra.utils.qwen_25_vl_utils import process_vision_info, smart_resize, IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS
@@ -116,6 +116,22 @@ class HookedVLM:
             return inputs, text
         else:
             return inputs
+
+ 
+    @contextmanager
+    def run_with_hooks(self, hooks, test=None):
+        """Hard coded with layer hooks for now. TODO: make more general"""
+        handles = []
+
+        for hook in hooks:
+            handle = self.model.language_model.layers[hook.layer].register_forward_hook(hook, with_kwargs=True)
+            handles.append(handle)
+
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
 
 
     def get_model_components(self):
