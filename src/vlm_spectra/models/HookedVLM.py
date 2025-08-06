@@ -133,6 +133,33 @@ class HookedVLM:
             for handle in handles:
                 handle.remove()
 
+    @contextmanager
+    def run_with_module_hooks(self, hooks):
+        """Context manager for module-level pre-hooks, specifically for o_proj layers."""
+        handles = []
+
+        for hook in hooks:
+            # Resolve module path based on hook configuration
+            if hasattr(hook, 'layer') and hasattr(hook, 'module_name'):
+                if hook.module_name == 'o_proj':
+                    module = self.model.language_model.layers[hook.layer].self_attn.o_proj
+                else:
+                    raise ValueError(f"Unsupported module name: {hook.module_name}")
+            elif hasattr(hook, 'module'):
+                module = hook.module
+            else:
+                raise ValueError("Hook must have either (layer, module_name) or module attribute")
+            
+            # Register forward_pre_hook 
+            handle = module.register_forward_pre_hook(hook, with_kwargs=False)
+            handles.append(handle)
+
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+
 
     def get_model_components(self):
         """Get model components needed for logit lens"""
