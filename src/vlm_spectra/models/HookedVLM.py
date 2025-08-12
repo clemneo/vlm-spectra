@@ -39,6 +39,7 @@ class HookedVLM:
         inputs,
         max_new_tokens: int = 512,
         output_hidden_states: bool = False,
+        output_attentions: bool = False,
         require_grads: bool = False,
     ):
         """Prepare inputs with:
@@ -57,11 +58,12 @@ class HookedVLM:
                 do_sample=False,
                 return_dict_in_generate=True,
                 output_hidden_states=output_hidden_states,
+                output_attentions=output_attentions,
             )
 
         return outputs
 
-    def forward(self, inputs, output_hidden_states: bool = False, require_grads: bool = False):
+    def forward(self, inputs, output_hidden_states: bool = False, output_attentions: bool = False, require_grads: bool = False):
         inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
         if self.device != "auto":   
             inputs = inputs.to(self.device)
@@ -72,6 +74,7 @@ class HookedVLM:
             outputs = self.model.forward(
                 **inputs,
                 output_hidden_states=output_hidden_states,
+                output_attentions=output_attentions,
                 return_dict=True,
             )
         return outputs
@@ -143,6 +146,8 @@ class HookedVLM:
             if hasattr(hook, 'layer') and hasattr(hook, 'module_name'):
                 if hook.module_name == 'o_proj':
                     module = self.model.language_model.layers[hook.layer].self_attn.o_proj
+                elif hook.module_name == 'mlp':
+                    module = self.model.language_model.layers[hook.layer].mlp
                 else:
                     raise ValueError(f"Unsupported module name: {hook.module_name}")
             elif hasattr(hook, 'module'):
@@ -150,8 +155,12 @@ class HookedVLM:
             else:
                 raise ValueError("Hook must have either (layer, module_name) or module attribute")
             
-            # Register forward_pre_hook 
-            handle = module.register_forward_pre_hook(hook, with_kwargs=False)
+            # Register appropriate hook type
+            if hasattr(hook, 'hook_type') and hook.hook_type == 'post':
+                handle = module.register_forward_hook(hook, with_kwargs=False)
+            else:
+                # Default to pre-hook
+                handle = module.register_forward_pre_hook(hook, with_kwargs=False)
             handles.append(handle)
 
         try:
