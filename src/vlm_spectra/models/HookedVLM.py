@@ -38,9 +38,10 @@ class HookedVLM:
         self,
         inputs,
         max_new_tokens: int = 512,
-        output_hidden_states: bool = False,
-        output_attentions: bool = False,
         require_grads: bool = False,
+        do_sample: bool = False,
+        return_dict_in_generate: bool = True,
+        **kwargs,
     ):
         """Prepare inputs with:
 
@@ -55,15 +56,14 @@ class HookedVLM:
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
-                return_dict_in_generate=True,
-                output_hidden_states=output_hidden_states,
-                output_attentions=output_attentions,
+                do_sample=do_sample,
+                return_dict_in_generate=return_dict_in_generate,
+                **kwargs,
             )
 
         return outputs
 
-    def forward(self, inputs, output_hidden_states: bool = False, output_attentions: bool = False, require_grads: bool = False):
+    def forward(self, inputs, require_grads: bool = False, return_dict: bool = True, **kwargs):
         inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
         if self.device != "auto":   
             inputs = inputs.to(self.device)
@@ -73,12 +73,12 @@ class HookedVLM:
         with torch.no_grad() if not require_grads else nullcontext():
             outputs = self.model.forward(
                 **inputs,
-                output_hidden_states=output_hidden_states,
-                output_attentions=output_attentions,
-                return_dict=True,
+                return_dict=return_dict,
+                **kwargs,
             )
         return outputs
 
+    ## TODO: rewrite to be more general
     def prepare_messages(self, task: str, image: Image, append_text: str = "", return_text: bool = False):
         messages = [
             {
@@ -121,6 +121,7 @@ class HookedVLM:
             return inputs
 
  
+    # TODO: Rewrite hooks to use the adapter
     @contextmanager
     def run_with_hooks(self, hooks, test=None):
         """Hard coded with layer hooks for now. TODO: make more general"""
@@ -179,6 +180,7 @@ class HookedVLM:
                 'tokenizer': self.processor.tokenizer,
             }
         }
+
         return model_to_components[type(self.model)]
 
     def generate_patch_overview(self, image: Image, with_labels: bool = True, start_number: int = 1) -> Image:
