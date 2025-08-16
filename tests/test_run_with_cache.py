@@ -31,6 +31,7 @@ def test_run_with_cache(model):
         ["lm_attn_out"], 
         ["lm_mlp_out"],
         ["lm_resid_post"],
+        ["lm_attn_pattern"],
     ]
     
     for cache_set in cache_sets_to_test:
@@ -73,6 +74,7 @@ def test_run_with_cache(model):
                  "lm_resid_post": (batch_size, seq_len, model.adapter.lm_hidden_dim),
                  "lm_attn_out": (batch_size, seq_len, model.adapter.lm_num_heads, model.adapter.lm_hidden_dim),
                  "lm_mlp_out": (batch_size, seq_len, model.adapter.lm_hidden_dim),
+                 "lm_attn_pattern": (batch_size, model.adapter.lm_num_heads, seq_len, seq_len),
                 }
             assert single_cache_item.shape == correct_shapes[hook_pos], f"Expected {hook_pos} to be a tensor of shape {correct_shapes[hook_pos]}, got {single_cache_item.shape}"
 
@@ -89,3 +91,53 @@ def test_run_with_cache_unsupported_hooks(model):
     with pytest.raises(NotImplementedError, match="Resid_mid hooks are not supported"):
         with model.run_with_cache(["lm_resid_mid"]):
             model.forward(inputs)
+
+def test_attn_pattern_matches_output_attentions(model):
+    """Test that lm_attn_pattern from run_with_cache matches output_attentions=True"""
+    image = generate_random_image()
+    inputs = model.prepare_messages("Describe the image.", image)
+    
+    # Get attention patterns using run_with_cache
+    with model.run_with_cache(["lm_attn_pattern"]):
+        _ = model.forward(inputs)
+    
+    # Get attention patterns using output_attentions=True
+    outputs_attn = model.forward(inputs, output_attentions=True)
+    
+    # Verify that both methods return attention patterns
+    assert hasattr(outputs_attn, 'attentions'), "output_attentions=True should return attentions"
+    assert outputs_attn.attentions is not None, "attentions should not be None"
+    assert len(outputs_attn.attentions) == model.adapter.lm_num_layers, f"Expected {model.adapter.lm_num_layers} attention layers"
+    
+    # Compare attention patterns layer by layer  
+    tolerance = 2e-3  # Reasonable tolerance for bfloat16 precision across all layers
+    
+    for layer_idx in range(model.adapter.lm_num_layers):
+        cache_key = ("lm_attn_pattern", layer_idx)
+        assert cache_key in model.cache, f"Expected cache key {cache_key} not found"
+        
+        cache_attn = model.cache[cache_key]
+        original_attn = outputs_attn.attentions[layer_idx]
+        
+        # Verify shapes match
+        assert cache_attn.shape == original_attn.shape, f"Shape mismatch at layer {layer_idx}: cache={cache_attn.shape}, original={original_attn.shape}"
+        
+        # Verify attention patterns are valid (sum to 1 along last dimension)
+        # Use higher tolerance for sum check due to bfloat16 precision
+        sum_tolerance = 1e-2
+        cache_sum = cache_attn.sum(dim=-1)
+        original_sum = original_attn.sum(dim=-1)
+        assert torch.allclose(cache_sum, torch.ones_like(cache_sum), atol=sum_tolerance), f"Cache attention sums invalid at layer {layer_idx}"
+        assert torch.allclose(original_sum, torch.ones_like(original_sum), atol=sum_tolerance), f"Original attention sums invalid at layer {layer_idx}"
+        
+        # Compare the actual values (ensure tensors are on the same device)
+        cache_attn_same_device = cache_attn.to(original_attn.device)
+        diff = torch.abs(cache_attn_same_device - original_attn).mean()
+        max_diff = torch.abs(cache_attn_same_device - original_attn).max()
+        
+        # Show the differences - this test will fail until RoPE is implemented
+        print(f"Layer {layer_idx}: mean_abs_diff={diff:.6f}, max_abs_diff={max_diff:.6f}")
+        
+        assert diff < tolerance, f"Attention patterns differ at layer {layer_idx}: mean_abs_diff={diff:.6f} > tolerance={tolerance} (RoPE not implemented yet)"
+    
+    print(f"✓ All {model.adapter.lm_num_layers} attention pattern layers match between run_with_cache and output_attentions=True")

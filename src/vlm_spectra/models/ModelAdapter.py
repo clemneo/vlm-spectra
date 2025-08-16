@@ -4,6 +4,47 @@ from transformers import Qwen2_5_VLForConditionalGeneration
 import torch
 from torch.nn.modules import ModuleList
 from einops import rearrange, einsum
+import math
+
+# Import Qwen2.5-VL specific functions
+try:
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+        apply_multimodal_rotary_pos_emb, 
+        repeat_kv, 
+        rotate_half
+    )
+except ImportError:
+    # Fallback implementations if not available
+    def rotate_half(x):
+        """Rotates half the hidden dims of the input."""
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
+    
+    def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+        """
+        This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+        num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+        """
+        batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+        if n_rep == 1:
+            return hidden_states
+        hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+        return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+    
+    def apply_multimodal_rotary_pos_emb(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
+        """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors"""
+        mrope_section = mrope_section * 2
+        cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+            unsqueeze_dim
+        )
+        sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+            unsqueeze_dim
+        )
+
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+        return q_embed, k_embed
 
 class ModelAdapter(ABC):
     def __init__(self, model):
@@ -43,6 +84,18 @@ class ModelAdapter(ABC):
     @abstractmethod
     def lm_o_proj(self):
         """Return list/dict of attention output projection modules"""
+        pass
+    
+    @property
+    @abstractmethod
+    def lm_q_proj(self):
+        """Return list/dict of attention query projection modules"""
+        pass
+    
+    @property
+    @abstractmethod
+    def lm_k_proj(self):
+        """Return list/dict of attention key projection modules"""
         pass
     
     @abstractmethod
@@ -89,6 +142,18 @@ class Qwen2_5_VLModelAdapter(ModelAdapter):
     def lm_o_proj(self):
         return ModuleList([
             layer.self_attn.o_proj for layer in self.model.language_model.layers
+        ])
+    
+    @property
+    def lm_q_proj(self):
+        return ModuleList([
+            layer.self_attn.q_proj for layer in self.model.language_model.layers
+        ])
+    
+    @property
+    def lm_k_proj(self):
+        return ModuleList([
+            layer.self_attn.k_proj for layer in self.model.language_model.layers
         ])
     
     @property
@@ -143,6 +208,70 @@ class Qwen2_5_VLModelAdapter(ModelAdapter):
         
         return per_head_contributions
     
+    def compute_attention_patterns(self, hidden_states: torch.Tensor, layer: int, attention_mask=None, position_ids=None, position_embeddings=None) -> torch.Tensor:
+        """
+        Compute attention patterns (attention weights) for a given layer using the exact same logic as Qwen2.5-VL
+        
+        NOTE: This method can't be fully accurate without position_embeddings and attention_mask.
+        For exact matching with output_attentions=True, we need to capture these during the forward pass.
+        
+        Args:
+            hidden_states: [batch, seq_len, hidden_size] - input to the attention layer
+            layer: layer index
+            attention_mask: attention mask tensor (optional)
+            position_ids: position ids tensor (optional) 
+            position_embeddings: tuple of (cos, sin) tensors for RoPE (optional)
+            
+        Returns:
+            [batch, num_heads, seq_len, seq_len] - attention patterns (softmax of Q@K^T)
+        """
+        # Get the attention layer for this specific layer
+        attn_layer = self.lm_attn[layer]
+        
+        bsz, q_len, _ = hidden_states.size()
+
+        # Project to Q, K, V using the layer's projection modules
+        query_states = attn_layer.q_proj(hidden_states)
+        key_states = attn_layer.k_proj(hidden_states)
+        
+        # Reshape to separate heads - following exact Qwen2.5-VL logic
+        query_states = query_states.view(bsz, q_len, -1, attn_layer.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, -1, attn_layer.head_dim).transpose(1, 2)
+
+        # Apply RoPE if position embeddings are available
+        if position_embeddings is not None:
+            cos, sin = position_embeddings
+            query_states, key_states = apply_multimodal_rotary_pos_emb(
+                query_states, key_states, cos, sin, attn_layer.rope_scaling["mrope_section"]
+            )
+
+        # Handle grouped query attention - repeat k/v heads if n_kv_heads < n_heads
+        key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
+
+        # Compute attention weights: Q @ K^T / sqrt(head_dim) - exact Qwen2.5-VL logic
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(attn_layer.head_dim)
+
+        # Apply attention mask - create causal mask if none provided
+        if attention_mask is not None:
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+        else:
+            # Create causal mask for autoregressive generation
+            # In Qwen2.5-VL, when attention_mask is None, causal masking is applied
+            seq_len = attn_weights.size(-1)
+            causal_mask = torch.triu(torch.full((seq_len, seq_len), float('-inf'), device=attn_weights.device, dtype=attn_weights.dtype), diagonal=1)
+            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+            attn_weights = attn_weights + causal_mask
+
+        # Fix precision issues in Qwen2-VL float16 inference (from original implementation)
+        if query_states.dtype == torch.float16:
+            attn_weights = torch.where(torch.isinf(attn_weights), torch.zeros_like(attn_weights), attn_weights)
+
+        # Apply softmax - exact Qwen2.5-VL logic: upcast to fp32, then back
+        attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+
+        return attn_weights
+    
     def format_cache(self, cache: dict) -> dict:
         # return cache
         for key, value in cache.items():
@@ -159,6 +288,8 @@ class Qwen2_5_VLModelAdapter(ModelAdapter):
                 cache[key] = self._format_attn_out(value)
             elif "mlp_out" in hook_pos:
                 cache[key] = self._format_mlp_out(value)
+            elif "attn_pattern" in hook_pos:
+                cache[key] = self._format_attn_pattern(value)
             else:
                 print(f"Warning: {hook_pos} not supported in cache formatting, skipping")
         return cache
@@ -182,4 +313,8 @@ class Qwen2_5_VLModelAdapter(ModelAdapter):
     
     def _format_mlp_out(self, cache_item: torch.Tensor) -> torch.Tensor:
         # MLP modules return tensors directly, not tuples
+        return cache_item.detach()
+    
+    def _format_attn_pattern(self, cache_item: torch.Tensor) -> torch.Tensor:
+        # Attention patterns are computed tensors [batch, num_heads, seq_len, seq_len]
         return cache_item.detach()

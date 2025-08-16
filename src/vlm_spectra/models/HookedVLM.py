@@ -144,8 +144,38 @@ class HookedVLM:
 
         def save_input_hook(layer, hook_pos):
             def hook(module, args, kwargs, output):
-                # Regular forward hook - we get input in args[0], ignore output
-                input_cache[(hook_pos, layer)] = args[0]
+                # For attention pattern computation, we need more than just hidden_states
+                if hook_pos == "lm_attn_pattern":
+                    # Capture all the arguments we need for accurate attention computation
+                    hook_data = {}
+                    if len(args) > 0:
+                        hook_data['hidden_states'] = args[0]
+                    elif 'hidden_states' in kwargs:
+                        hook_data['hidden_states'] = kwargs['hidden_states']
+                    
+                    # Capture additional arguments for accurate attention computation
+                    hook_data['attention_mask'] = kwargs.get('attention_mask', None)
+                    hook_data['position_ids'] = kwargs.get('position_ids', None)
+                    hook_data['position_embeddings'] = kwargs.get('position_embeddings', None)
+                    
+                    # # Debug print to see what we're capturing
+                    # print(f'Layer {layer} hook capture:')
+                    # print(f'  attention_mask: {hook_data["attention_mask"] is not None}')
+                    # print(f'  position_ids: {hook_data["position_ids"] is not None}')
+                    # print(f'  position_embeddings: {hook_data["position_embeddings"] is not None}')
+                    # if hook_data["position_embeddings"] is not None:
+                    #     cos, sin = hook_data["position_embeddings"]
+                    #     print(f'  cos shape: {cos.shape}, sin shape: {sin.shape}')
+                    
+                    input_cache[(hook_pos, layer)] = hook_data
+                else:
+                    # Regular handling for other hook types
+                    if len(args) > 0:
+                        input_cache[(hook_pos, layer)] = args[0]
+                    else:
+                        # For modules called with keyword arguments, check kwargs
+                        if 'hidden_states' in kwargs:
+                            input_cache[(hook_pos, layer)] = kwargs['hidden_states']
             return hook
 
         # Something about registering forward hook and saving output
@@ -166,6 +196,11 @@ class HookedVLM:
                     for layer in lm_layer_list:
                         handle = self.adapter.lm_mlp[layer].register_forward_hook(save_output_hook(layer, hook_pos), with_kwargs=True)
                         handles.append(handle)
+                elif "attn_pattern" in hook_pos:
+                    for layer in lm_layer_list:
+                        # Hook the attention module to capture hidden states input
+                        handle = self.adapter.lm_attn[layer].register_forward_hook(save_input_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
                 elif "resid_mid" in hook_pos:
                     raise NotImplementedError("Resid_mid hooks are not supported for now")
             else:
@@ -185,6 +220,23 @@ class HookedVLM:
                             concatenated_heads = input_cache[(hook_pos, layer)]
                             per_head_contribs = self.adapter.compute_per_head_contributions(concatenated_heads, layer)
                             cache[(hook_pos, layer)] = per_head_contribs
+                elif "attn_pattern" in hook_pos:
+                    for layer in lm_layer_list:
+                        if (hook_pos, layer) in input_cache:
+                            hook_data = input_cache[(hook_pos, layer)]
+                            if isinstance(hook_data, dict):
+                                # New format with additional parameters
+                                attn_patterns = self.adapter.compute_attention_patterns(
+                                    hidden_states=hook_data['hidden_states'],
+                                    layer=layer,
+                                    attention_mask=hook_data.get('attention_mask'),
+                                    position_ids=hook_data.get('position_ids'),
+                                    position_embeddings=hook_data.get('position_embeddings')
+                                )
+                            else:
+                                # Fallback for old format
+                                attn_patterns = self.adapter.compute_attention_patterns(hook_data, layer)
+                            cache[(hook_pos, layer)] = attn_patterns
 
             cache = self.adapter.format_cache(cache) # format each item to make it a single tensor
 
