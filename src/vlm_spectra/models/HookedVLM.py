@@ -1,11 +1,11 @@
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import torch
 from PIL import Image, ImageDraw, ImageFont
-import numpy as np
 from contextlib import nullcontext, contextmanager
 
 from vlm_spectra.models.model_prompts import UI_TARS_PROMPT
 from vlm_spectra.utils.qwen_25_vl_utils import process_vision_info, smart_resize, IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS
+from vlm_spectra.models.ModelAdapter import get_model_adapter
 
 SUPPORTED_QWEN_25_VL_MODELS = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
@@ -28,11 +28,14 @@ class HookedVLM:
             )
             self.processor = AutoProcessor.from_pretrained(model_name)
             self.prompt = UI_TARS_PROMPT
-        
+
         if device == "auto":
             self.device = next(self.model.parameters()).device # Get the device of the first param
         else:
             self.device = device
+
+        self.adapter = get_model_adapter(self.model)
+        self.cache = None
 
     def generate(
         self,
@@ -73,7 +76,7 @@ class HookedVLM:
         with torch.no_grad() if not require_grads else nullcontext():
             outputs = self.model.forward(
                 **inputs,
-                return_dict=return_dict,
+                return_dict=True,
                 **kwargs,
             )
         return outputs
@@ -121,6 +124,75 @@ class HookedVLM:
             return inputs
 
  
+    @contextmanager
+    def run_with_cache(self, cache_set: list):
+        # keys could be: resid_pre, attn_out, resid_mid, mlp_out, resid_post
+        handles = []
+        
+        # sanity checks
+        for hook_pos in cache_set:
+            if "lm" not in hook_pos:
+                raise NotImplementedError("Only LM hooks are supported for now")
+                
+        cache = {}
+        input_cache = {}
+
+        def save_output_hook(layer, hook_pos):
+            def hook(module, args, kwargs, output):
+                cache[(hook_pos, layer)] = output
+            return hook
+
+        def save_input_hook(layer, hook_pos):
+            def hook(module, args, kwargs, output):
+                # Regular forward hook - we get input in args[0], ignore output
+                input_cache[(hook_pos, layer)] = args[0]
+            return hook
+
+        # Something about registering forward hook and saving output
+        lm_layer_list = list(range(self.adapter.lm_num_layers))
+
+        for hook_pos in cache_set:
+            if "lm" in hook_pos:
+                if "resid_pre" in hook_pos or "resid_post" in hook_pos:
+                    for layer in lm_layer_list:
+                        handle = self.adapter.lm_layers[layer].register_forward_hook(save_output_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "attn_out" in hook_pos:
+                    for layer in lm_layer_list:
+                        # Hook the input to o_proj to get concatenated heads before final projection
+                        handle = self.adapter.lm_o_proj[layer].register_forward_hook(save_input_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "mlp_out" in hook_pos:
+                    for layer in lm_layer_list:
+                        handle = self.adapter.lm_mlp[layer].register_forward_hook(save_output_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "resid_mid" in hook_pos:
+                    raise NotImplementedError("Resid_mid hooks are not supported for now")
+            else:
+                raise NotImplementedError("Only LM hooks are supported for now")
+
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+
+            # Process attention outputs to compute per-head contributions
+            for hook_pos in cache_set:
+                if "attn_out" in hook_pos:
+                    for layer in lm_layer_list:
+                        if (hook_pos, layer) in input_cache:
+                            concatenated_heads = input_cache[(hook_pos, layer)]
+                            per_head_contribs = self.adapter.compute_per_head_contributions(concatenated_heads, layer)
+                            cache[(hook_pos, layer)] = per_head_contribs
+
+            cache = self.adapter.format_cache(cache) # format each item to make it a single tensor
+
+            self.cache = cache
+
+
+
+
     # TODO: Rewrite hooks to use the adapter
     @contextmanager
     def run_with_hooks(self, hooks, test=None):
@@ -241,10 +313,10 @@ class HookedVLM:
         # Try to load a font, fall back to default if not available
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
-        except:
+        except (OSError, IOError):
             try:
                 font = ImageFont.load_default()
-            except:
+            except (OSError, IOError):
                 font = None
         
         if with_labels:
