@@ -6,7 +6,7 @@ from pathlib import Path
 import base64
 from io import BytesIO
 from PIL import Image
-from typing import List, Tuple, Dict, Union, Optional
+from typing import List, Tuple, Union
 
 
 def create_logit_lens(
