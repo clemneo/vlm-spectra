@@ -141,3 +141,107 @@ def test_attn_pattern_matches_output_attentions(model):
         assert diff < tolerance, f"Attention patterns differ at layer {layer_idx}: mean_abs_diff={diff:.6f} > tolerance={tolerance} (RoPE not implemented yet)"
     
     print(f"✓ All {model.adapter.lm_num_layers} attention pattern layers match between run_with_cache and output_attentions=True")
+
+def test_resid_post_matches_output_hidden_states(model):
+    """Test that lm_resid_post from run_with_cache matches output_hidden_states=True"""
+    image = generate_random_image()
+    inputs = model.prepare_messages("Describe the image.", image)
+    
+    # Get residual post activations using run_with_cache
+    with model.run_with_cache(["lm_resid_post"]):
+        _ = model.forward(inputs)
+    
+    # Get hidden states using output_hidden_states=True
+    outputs_hidden = model.forward(inputs, output_hidden_states=True)
+    
+    # Verify that both methods return hidden states
+    assert hasattr(outputs_hidden, 'hidden_states'), "output_hidden_states=True should return hidden_states"
+    assert outputs_hidden.hidden_states is not None, "hidden_states should not be None"
+    assert len(outputs_hidden.hidden_states) == model.adapter.lm_num_layers + 1, f"Expected {model.adapter.lm_num_layers + 1} hidden states (input + all layers)"
+    
+    # Compare residual post activations layer by layer  
+    # Note: We exclude the last layer because models may apply additional normalization
+    # to the final hidden state as mentioned in HuggingFace documentation
+    tolerance = 2e-3  # Reasonable tolerance for bfloat16 precision across all layers
+    
+    layers_to_compare = model.adapter.lm_num_layers - 1  # Exclude the last layer
+    
+    for layer_idx in range(layers_to_compare):
+        cache_key = ("lm_resid_post", layer_idx)
+        assert cache_key in model.cache, f"Expected cache key {cache_key} not found"
+        
+        cache_resid = model.cache[cache_key]
+        # Hidden states includes input embeddings at index 0, so layer outputs start at index 1
+        original_hidden = outputs_hidden.hidden_states[layer_idx + 1]
+        
+        # Verify shapes match
+        assert cache_resid.shape == original_hidden.shape, f"Shape mismatch at layer {layer_idx}: cache={cache_resid.shape}, original={original_hidden.shape}"
+        
+        # Compare the actual values (ensure tensors are on the same device)
+        cache_resid_same_device = cache_resid.to(original_hidden.device)
+        diff = torch.abs(cache_resid_same_device - original_hidden).mean()
+        max_diff = torch.abs(cache_resid_same_device - original_hidden).max()
+        
+        # Show the differences
+        print(f"Layer {layer_idx}: mean_abs_diff={diff:.6f}, max_abs_diff={max_diff:.6f}")
+        
+        assert diff < tolerance, f"Residual post activations differ at layer {layer_idx}: mean_abs_diff={diff:.6f} > tolerance={tolerance}"
+    
+    # Show the difference for the last layer (but don't assert on it)
+    final_layer_idx = model.adapter.lm_num_layers - 1
+    cache_key = ("lm_resid_post", final_layer_idx)
+    if cache_key in model.cache:
+        cache_resid = model.cache[cache_key]
+        original_hidden = outputs_hidden.hidden_states[final_layer_idx + 1]
+        cache_resid_same_device = cache_resid.to(original_hidden.device)
+        diff = torch.abs(cache_resid_same_device - original_hidden).mean()
+        max_diff = torch.abs(cache_resid_same_device - original_hidden).max()
+        print(f"Layer {final_layer_idx} (final, not compared): mean_abs_diff={diff:.6f}, max_abs_diff={max_diff:.6f}")
+    
+    print(f"✓ {layers_to_compare} residual post layers match between run_with_cache and output_hidden_states=True (excluding final layer due to potential normalization)")
+
+def test_final_layer_resid_post_vs_normalized_hidden_state(model):
+    """Test the relationship between the final layer's lm_resid_post and the normalized hidden state"""
+    image = generate_random_image()
+    inputs = model.prepare_messages("Describe the image.", image)
+    
+    # Get residual post activations for the final layer using run_with_cache
+    with model.run_with_cache(["lm_resid_post"]):
+        _ = model.forward(inputs)
+    
+    # Get normalized hidden states using output_hidden_states=True
+    outputs_hidden = model.forward(inputs, output_hidden_states=True)
+    
+    # Get the final layer's outputs
+    final_layer_idx = model.adapter.lm_num_layers - 1
+    cache_key = ("lm_resid_post", final_layer_idx)
+    
+    assert cache_key in model.cache, f"Expected cache key {cache_key} not found"
+    
+    # The cached resid_post is the output of the final transformer layer (before RMSNorm)
+    final_resid_post = model.cache[cache_key]
+    
+    # The final hidden state from output_hidden_states includes RMSNorm normalization
+    final_normalized_hidden = outputs_hidden.hidden_states[-1]  # Last hidden state
+    
+    # Verify shapes match
+    assert final_resid_post.shape == final_normalized_hidden.shape, f"Shape mismatch: cache={final_resid_post.shape}, normalized={final_normalized_hidden.shape}"
+    
+    # Apply the same RMSNorm to our cached resid_post to see if it matches
+    norm_layer = model.model.model.language_model.norm
+    manually_normalized = norm_layer(final_resid_post.to(norm_layer.weight.device))
+    
+    # Compare manually normalized with HF's normalized output
+    manually_normalized_same_device = manually_normalized.to(final_normalized_hidden.device)
+    diff = torch.abs(manually_normalized_same_device - final_normalized_hidden).mean()
+    max_diff = torch.abs(manually_normalized_same_device - final_normalized_hidden).max()
+    
+    print(f"Final layer before normalization vs after normalization:")
+    print(f"  Raw resid_post vs normalized hidden state: mean_abs_diff={torch.abs(final_resid_post.to(final_normalized_hidden.device) - final_normalized_hidden).mean():.6f}")
+    print(f"  Manually normalized vs HF normalized: mean_abs_diff={diff:.6f}, max_abs_diff={max_diff:.6f}")
+    
+    # The manually normalized version should match HF's normalized output very closely
+    tolerance = 1e-4  # Tighter tolerance since we're applying the same normalization
+    assert diff < tolerance, f"Manually normalized resid_post differs from HF normalized: mean_abs_diff={diff:.6f} > tolerance={tolerance}"
+    
+    print(f"✓ Final layer lm_resid_post + manual RMSNorm matches output_hidden_states final hidden state")
