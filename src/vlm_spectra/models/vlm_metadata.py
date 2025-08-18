@@ -1,7 +1,5 @@
-import torch
 from PIL import Image
-from typing import Dict, Tuple, List, Optional
-import numpy as np
+from typing import Dict
 
 class VLMMetadataExtractor:
     """Extract metadata needed for logit lens visualization from various VLMs"""
@@ -88,7 +86,6 @@ class VLMMetadataExtractor:
         # Create token labels
         token_labels = []
         image_token_positions = []
-        img_token_counter = 0
         
         # Find image token and expand it
         for i, token_id in enumerate(input_ids.tolist()):

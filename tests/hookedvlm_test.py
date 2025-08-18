@@ -84,6 +84,14 @@ def test_forward_with_output_hidden_states(model):
         type(outputs.hidden_states[0]) is torch.Tensor
     )  # the tensor of shape (batch_size, sequence_length, hidden_size)
 
+def test_forward_with_output_attentions(model):
+    image = generate_random_image()
+    inputs = model.prepare_messages("Describe the image.", image)
+    outputs = model.forward(inputs, output_attentions=True)
+    assert type(outputs.attentions) is tuple
+    assert len(outputs.attentions) > 0
+    assert type(outputs.attentions[0]) is torch.Tensor
+
 
 def test_get_model_components(model):
     components = model.get_model_components()

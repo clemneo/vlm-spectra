@@ -1,11 +1,11 @@
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import torch
 from PIL import Image, ImageDraw, ImageFont
-import numpy as np
 from contextlib import nullcontext, contextmanager
 
 from vlm_spectra.models.model_prompts import UI_TARS_PROMPT
 from vlm_spectra.utils.qwen_25_vl_utils import process_vision_info, smart_resize, IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS
+from vlm_spectra.models.ModelAdapter import get_model_adapter
 
 SUPPORTED_QWEN_25_VL_MODELS = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
@@ -28,19 +28,23 @@ class HookedVLM:
             )
             self.processor = AutoProcessor.from_pretrained(model_name)
             self.prompt = UI_TARS_PROMPT
-        
+
         if device == "auto":
             self.device = next(self.model.parameters()).device # Get the device of the first param
         else:
             self.device = device
 
+        self.adapter = get_model_adapter(self.model)
+        self.cache = None
+
     def generate(
         self,
         inputs,
         max_new_tokens: int = 512,
-        output_hidden_states: bool = False,
-        output_attentions: bool = False,
         require_grads: bool = False,
+        do_sample: bool = False,
+        return_dict_in_generate: bool = True,
+        **kwargs,
     ):
         """Prepare inputs with:
 
@@ -55,15 +59,14 @@ class HookedVLM:
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
-                return_dict_in_generate=True,
-                output_hidden_states=output_hidden_states,
-                output_attentions=output_attentions,
+                do_sample=do_sample,
+                return_dict_in_generate=return_dict_in_generate,
+                **kwargs,
             )
 
         return outputs
 
-    def forward(self, inputs, output_hidden_states: bool = False, output_attentions: bool = False, require_grads: bool = False):
+    def forward(self, inputs, require_grads: bool = False, return_dict: bool = True, **kwargs):
         inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
         if self.device != "auto":   
             inputs = inputs.to(self.device)
@@ -73,12 +76,12 @@ class HookedVLM:
         with torch.no_grad() if not require_grads else nullcontext():
             outputs = self.model.forward(
                 **inputs,
-                output_hidden_states=output_hidden_states,
-                output_attentions=output_attentions,
                 return_dict=True,
+                **kwargs,
             )
         return outputs
 
+    ## TODO: rewrite to be more general
     def prepare_messages(self, task: str, image: Image, append_text: str = "", return_text: bool = False):
         messages = [
             {
@@ -121,6 +124,128 @@ class HookedVLM:
             return inputs
 
  
+    @contextmanager
+    def run_with_cache(self, cache_set: list):
+        # keys could be: resid_pre, attn_out, resid_mid, mlp_out, resid_post
+        handles = []
+        
+        # sanity checks
+        for hook_pos in cache_set:
+            if "lm" not in hook_pos:
+                raise NotImplementedError("Only LM hooks are supported for now")
+                
+        cache = {}
+        input_cache = {}
+
+        def save_output_hook(layer, hook_pos):
+            def hook(module, args, kwargs, output):
+                cache[(hook_pos, layer)] = output
+            return hook
+
+        def save_input_hook(layer, hook_pos):
+            def hook(module, args, kwargs, output):
+                # For attention pattern computation, we need more than just hidden_states
+                if hook_pos == "lm_attn_pattern":
+                    # Capture all the arguments we need for accurate attention computation
+                    hook_data = {}
+                    if len(args) > 0:
+                        hook_data['hidden_states'] = args[0]
+                    elif 'hidden_states' in kwargs:
+                        hook_data['hidden_states'] = kwargs['hidden_states']
+                    
+                    # Capture additional arguments for accurate attention computation
+                    hook_data['attention_mask'] = kwargs.get('attention_mask', None)
+                    hook_data['position_ids'] = kwargs.get('position_ids', None)
+                    hook_data['position_embeddings'] = kwargs.get('position_embeddings', None)
+                    
+                    # # Debug print to see what we're capturing
+                    # print(f'Layer {layer} hook capture:')
+                    # print(f'  attention_mask: {hook_data["attention_mask"] is not None}')
+                    # print(f'  position_ids: {hook_data["position_ids"] is not None}')
+                    # print(f'  position_embeddings: {hook_data["position_embeddings"] is not None}')
+                    # if hook_data["position_embeddings"] is not None:
+                    #     cos, sin = hook_data["position_embeddings"]
+                    #     print(f'  cos shape: {cos.shape}, sin shape: {sin.shape}')
+                    
+                    input_cache[(hook_pos, layer)] = hook_data
+                else:
+                    # Regular handling for other hook types
+                    if len(args) > 0:
+                        input_cache[(hook_pos, layer)] = args[0]
+                    else:
+                        # For modules called with keyword arguments, check kwargs
+                        if 'hidden_states' in kwargs:
+                            input_cache[(hook_pos, layer)] = kwargs['hidden_states']
+            return hook
+
+        # Something about registering forward hook and saving output
+        lm_layer_list = list(range(self.adapter.lm_num_layers))
+
+        for hook_pos in cache_set:
+            if "lm" in hook_pos:
+                if "resid_pre" in hook_pos or "resid_post" in hook_pos:
+                    for layer in lm_layer_list:
+                        handle = self.adapter.lm_layers[layer].register_forward_hook(save_output_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "attn_out" in hook_pos:
+                    for layer in lm_layer_list:
+                        # Hook the input to o_proj to get concatenated heads before final projection
+                        handle = self.adapter.lm_o_proj[layer].register_forward_hook(save_input_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "mlp_out" in hook_pos:
+                    for layer in lm_layer_list:
+                        handle = self.adapter.lm_mlp[layer].register_forward_hook(save_output_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "attn_pattern" in hook_pos:
+                    for layer in lm_layer_list:
+                        # Hook the attention module to capture hidden states input
+                        handle = self.adapter.lm_attn[layer].register_forward_hook(save_input_hook(layer, hook_pos), with_kwargs=True)
+                        handles.append(handle)
+                elif "resid_mid" in hook_pos:
+                    raise NotImplementedError("Resid_mid hooks are not supported for now")
+            else:
+                raise NotImplementedError("Only LM hooks are supported for now")
+
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+
+            # Process attention outputs to compute per-head contributions
+            for hook_pos in cache_set:
+                if "attn_out" in hook_pos:
+                    for layer in lm_layer_list:
+                        if (hook_pos, layer) in input_cache:
+                            concatenated_heads = input_cache[(hook_pos, layer)]
+                            per_head_contribs = self.adapter.compute_per_head_contributions(concatenated_heads, layer)
+                            cache[(hook_pos, layer)] = per_head_contribs
+                elif "attn_pattern" in hook_pos:
+                    for layer in lm_layer_list:
+                        if (hook_pos, layer) in input_cache:
+                            hook_data = input_cache[(hook_pos, layer)]
+                            if isinstance(hook_data, dict):
+                                # New format with additional parameters
+                                attn_patterns = self.adapter.compute_attention_patterns(
+                                    hidden_states=hook_data['hidden_states'],
+                                    layer=layer,
+                                    attention_mask=hook_data.get('attention_mask'),
+                                    position_ids=hook_data.get('position_ids'),
+                                    position_embeddings=hook_data.get('position_embeddings')
+                                )
+                            else:
+                                # Fallback for old format
+                                attn_patterns = self.adapter.compute_attention_patterns(hook_data, layer)
+                            cache[(hook_pos, layer)] = attn_patterns
+
+            cache = self.adapter.format_cache(cache) # format each item to make it a single tensor
+
+            self.cache = cache
+
+
+
+
+    # TODO: Rewrite hooks to use the adapter
     @contextmanager
     def run_with_hooks(self, hooks, test=None):
         """Hard coded with layer hooks for now. TODO: make more general"""
@@ -179,6 +304,7 @@ class HookedVLM:
                 'tokenizer': self.processor.tokenizer,
             }
         }
+
         return model_to_components[type(self.model)]
 
     def generate_patch_overview(self, image: Image, with_labels: bool = True, start_number: int = 1) -> Image:
@@ -239,10 +365,10 @@ class HookedVLM:
         # Try to load a font, fall back to default if not available
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
-        except:
+        except (OSError, IOError):
             try:
                 font = ImageFont.load_default()
-            except:
+            except (OSError, IOError):
                 font = None
         
         if with_labels:
