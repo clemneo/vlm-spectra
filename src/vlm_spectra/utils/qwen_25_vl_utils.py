@@ -360,7 +360,7 @@ def is_torchcodec_available() -> bool:
             return False
         if (
             importlib.util.find_spec("torchcodec.decoders") is None
-        ):  # NEO: Changed this to stop the linter from complaining, not sure if it works
+        ):  # Changed this to stop the linter from complaining, not sure if it works
             return False
         return True
     except (ImportError, AttributeError, Exception):
