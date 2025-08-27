@@ -51,7 +51,8 @@ class HookedVLM:
         `inputs = self._prepare_messages(task, image)`
         """
 
-        inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
+        # inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
+        inputs = inputs.to(self.device)
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
@@ -67,9 +68,8 @@ class HookedVLM:
         return outputs
 
     def forward(self, inputs, require_grads: bool = False, return_dict: bool = True, **kwargs):
-        inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
-        if self.device != "auto":   
-            inputs = inputs.to(self.device)
+        # inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
+        inputs = inputs.to(self.device)
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
@@ -255,6 +255,19 @@ class HookedVLM:
             handle = self.model.language_model.layers[hook.layer].register_forward_hook(hook, with_kwargs=True)
             handles.append(handle)
 
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+
+    @contextmanager
+    def run_with_attn_hooks(self, hooks):
+        """Context manager for attention-level pre-hooks, specifically for o_proj layers."""
+        handles = []
+        for hook in hooks:
+            handle = self.adapter.lm_attn[hook.layer].register_forward_pre_hook(hook, with_kwargs=True)
+            handles.append(handle)
         try:
             yield
         finally:
