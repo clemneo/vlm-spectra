@@ -11,15 +11,14 @@ Interactive web application for demonstrating square generation and UI-TARS mode
 
 ## Setup
 
-1. Install demo dependencies:
+We use uv, so dependencies are as simple as:
+1. Make sure vlm-spectra is your current working directory:
 ```bash
-cd /root/comp/computer-interp/demo
-pip install -r requirements.txt
+cd vlm-spectra
 ```
-
 2. Run the demo server:
 ```bash
-python app.py
+uv run src/vlm-spectra/web_app/app.py
 ```
 
 3. Open your browser to: http://localhost:55556
@@ -27,17 +26,12 @@ python app.py
 ## Usage
 
 1. **Wait for Model Loading**: The model loads in the background (may take a few minutes)
-2. **Configure Parameters**:
-   - Grid Size: Width and height of the grid (3x3 to 6x6)
-   - Square Position: X,Y coordinates of the colored square
-   - Colors: Square color and background color
-   - Padding: Spacing around the square (0-10px)
-   - Task: Instruction text for the model
+2. **Upload image**: You can upload an image, or paste a screenshot
 
-3. **Generate & Predict**: Click the button to generate image and run inference
+3. **Predict**: Click the button to run inference
 
 4. **View Results**:
-   - Generated image with coordinate overlays
+   - Image with coordinate overlays
    - Model's raw output text
    - Accuracy comparison (ground truth vs prediction)
    - Performance metrics
