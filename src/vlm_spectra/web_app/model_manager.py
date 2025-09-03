@@ -108,3 +108,79 @@ class ModelManager:
                 'success': False,
                 'error': str(e)
             }
+
+    def forward_pass_analysis(
+        self,
+        image_path: str,
+        task: str
+    ) -> Dict[str, Any]:
+        """Run forward pass analysis on uploaded image and return top token predictions"""
+        if not self.is_ready:
+            raise RuntimeError("Model not ready")
+            
+        try:
+            from PIL import Image
+            import torch.nn.functional as F
+            
+            # Load the uploaded image
+            image = Image.open(image_path)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Prepare model inputs
+            inputs = self.model.prepare_messages(task, image)
+            
+            # Ensure inputs are on correct device
+            for key, value in inputs.items():
+                if torch.is_tensor(value):
+                    inputs[key] = value.to(self.model.device)
+                elif isinstance(value, dict):
+                    for subkey, subvalue in value.items():
+                        if torch.is_tensor(subvalue):
+                            value[subkey] = subvalue.to(self.model.device)
+            
+            # Run forward pass to get logits
+            start_time = time.time()
+            outputs = self.model.forward(inputs)
+            inference_time = time.time() - start_time
+            
+            # Extract logits from the last token position
+            logits = outputs.logits[0, -1, :]  # [vocab_size]
+            
+            # Get probabilities
+            probs = F.softmax(logits, dim=-1)
+            
+            # Get top 10 tokens
+            top_probs, top_indices = torch.topk(probs, k=10)
+            top_logits = logits[top_indices]
+            
+            # Convert to token strings
+            tokenizer = self.model.processor.tokenizer
+            top_tokens = []
+            
+            for i in range(10):
+                token_id = top_indices[i].item()
+                token_str = tokenizer.decode([token_id])
+                
+                top_tokens.append({
+                    'token': token_str,
+                    'token_id': token_id,
+                    'probability': top_probs[i].item(),
+                    'logit': top_logits[i].item()
+                })
+            
+            return {
+                'success': True,
+                'image_url': f'/{image_path}',
+                'task': task,
+                'top_tokens': top_tokens,
+                'token_position': f"Position {inputs['input_ids'].shape[1]}",
+                'inference_time': round(inference_time, 2),
+                'image_size': image.size
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }

@@ -88,6 +88,34 @@ def predict_from_uploaded_image():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/forward', methods=['POST'])
+def forward_pass_analysis():
+    """Run forward pass analysis on uploaded image"""
+    if not model_manager.is_ready:
+        return jsonify({'error': 'Model not ready yet'}), 503
+    
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        task = data.get('task', 'Click on the relevant element.')
+        
+        if not filename:
+            return jsonify({'error': 'No filename provided'}), 400
+        
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+        
+        result = model_manager.forward_pass_analysis(
+            image_path=image_path,
+            task=task
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/static/uploads/<filename>')
 def serve_uploaded_image(filename):
@@ -104,4 +132,4 @@ if __name__ == '__main__':
     model_thread.start()
     
     print("Demo will be available at http://localhost:55556")
-    app.run(host='0.0.0.0', port=55556, debug=True)
+    app.run(host='0.0.0.0', port=55556, debug=True, use_reloader=False)

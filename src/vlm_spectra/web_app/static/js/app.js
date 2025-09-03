@@ -10,10 +10,13 @@ class DemoApp {
     }
     
     initializeEventListeners() {
-        // Form submission
-        document.getElementById('demoForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.handlePredict();
+        // Analysis buttons
+        document.getElementById('analyzeGenerationBtn').addEventListener('click', () => {
+            this.handleAnalysis('generation');
+        });
+        
+        document.getElementById('analyzeForwardBtn').addEventListener('click', () => {
+            this.handleAnalysis('forward');
         });
         
         // Image upload
@@ -94,7 +97,7 @@ class DemoApp {
             if (result.success) {
                 this.uploadedImage = result;
                 this.showImagePreview(result.url);
-                this.enablePredictButton();
+                this.enableAnalysisButtons();
             } else {
                 this.showError(result.error || 'Upload failed');
                 this.resetDropZone();
@@ -139,7 +142,8 @@ class DemoApp {
     removeImage() {
         this.uploadedImage = null;
         document.getElementById('imagePreviewContainer').classList.add('d-none');
-        document.getElementById('predictBtn').disabled = true;
+        document.getElementById('analyzeGenerationBtn').disabled = true;
+        document.getElementById('analyzeForwardBtn').disabled = true;
         this.resetDropZone();
     }
     
@@ -164,9 +168,10 @@ class DemoApp {
         });
     }
     
-    enablePredictButton() {
+    enableAnalysisButtons() {
         if (this.modelReady) {
-            document.getElementById('predictBtn').disabled = false;
+            document.getElementById('analyzeGenerationBtn').disabled = false;
+            document.getElementById('analyzeForwardBtn').disabled = false;
         }
     }
     
@@ -176,23 +181,27 @@ class DemoApp {
             const status = await response.json();
             
             const statusElement = document.getElementById('modelStatus');
-            const predictBtn = document.getElementById('predictBtn');
+            const generationBtn = document.getElementById('analyzeGenerationBtn');
+            const forwardBtn = document.getElementById('analyzeForwardBtn');
             
             if (status.ready) {
                 statusElement.className = 'alert alert-success';
                 statusElement.innerHTML = '<i class="fas fa-check-circle me-2"></i>Model ready!';
                 this.modelReady = true;
                 if (this.uploadedImage) {
-                    predictBtn.disabled = false;
+                    generationBtn.disabled = false;
+                    forwardBtn.disabled = false;
                 }
             } else if (status.error) {
                 statusElement.className = 'alert alert-danger';
                 statusElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>Error: ${status.error}`;
-                predictBtn.disabled = true;
+                generationBtn.disabled = true;
+                forwardBtn.disabled = true;
             } else {
                 statusElement.className = 'alert alert-info';
                 statusElement.innerHTML = '<i class="spinner-border spinner-border-sm me-2"></i>Model loading...';
-                predictBtn.disabled = true;
+                generationBtn.disabled = true;
+                forwardBtn.disabled = true;
                 // Continue checking
                 setTimeout(() => this.checkModelStatus(), 2000);
             }
@@ -204,18 +213,24 @@ class DemoApp {
         }
     }
     
-    async handlePredict() {
+    async handleAnalysis(mode) {
         if (!this.modelReady || this.isPredicting || !this.uploadedImage) {
             return;
         }
         
         this.isPredicting = true;
-        const predictBtn = document.getElementById('predictBtn');
-        const predictSpinner = document.getElementById('predictSpinner');
+        const isGeneration = mode === 'generation';
+        const btnId = isGeneration ? 'analyzeGenerationBtn' : 'analyzeForwardBtn';
+        const spinnerId = isGeneration ? 'generationSpinner' : 'forwardSpinner';
+        const endpoint = isGeneration ? '/api/predict' : '/api/forward';
+        
+        const button = document.getElementById(btnId);
+        const spinner = document.getElementById(spinnerId);
         
         // Update UI
-        predictBtn.disabled = true;
-        predictSpinner.classList.remove('d-none');
+        document.getElementById('analyzeGenerationBtn').disabled = true;
+        document.getElementById('analyzeForwardBtn').disabled = true;
+        spinner.classList.remove('d-none');
         
         const formData = {
             filename: this.uploadedImage.filename,
@@ -223,7 +238,7 @@ class DemoApp {
         };
         
         try {
-            const response = await fetch('/api/predict', {
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -234,24 +249,29 @@ class DemoApp {
             const result = await response.json();
             
             if (result.success) {
-                this.displayResults(result);
+                if (isGeneration) {
+                    this.displayGenerationResults(result);
+                } else {
+                    this.displayForwardResults(result);
+                }
             } else {
-                this.showError(result.error || 'Prediction failed');
+                this.showError(result.error || `${mode} analysis failed`);
             }
         } catch (error) {
-            console.error('Error during prediction:', error);
+            console.error(`Error during ${mode} analysis:`, error);
             this.showError('Failed to connect to server');
         } finally {
             // Reset UI
-            predictBtn.disabled = false;
-            predictSpinner.classList.add('d-none');
+            document.getElementById('analyzeGenerationBtn').disabled = false;
+            document.getElementById('analyzeForwardBtn').disabled = false;
+            spinner.classList.add('d-none');
             this.isPredicting = false;
         }
     }
     
-    displayResults(result) {
+    displayGenerationResults(result) {
         const container = document.getElementById('resultsContainer');
-        const template = document.getElementById('resultsTemplate');
+        const template = document.getElementById('generationResultsTemplate');
         
         // Clone template
         const resultsContent = template.cloneNode(true);
@@ -288,6 +308,51 @@ class DemoApp {
         // Replace container content
         container.innerHTML = '';
         container.appendChild(resultsContent);
+    }
+    
+    displayForwardResults(result) {
+        const container = document.getElementById('resultsContainer');
+        const template = document.getElementById('forwardResultsTemplate');
+        
+        // Clone template
+        const resultsContent = template.cloneNode(true);
+        resultsContent.classList.remove('d-none');
+        resultsContent.id = '';
+        
+        // Populate data (no image display)
+        resultsContent.querySelector('#imageSizeForward').textContent = `${result.image_size[0]}×${result.image_size[1]}`;
+        resultsContent.querySelector('#taskTextForward').textContent = result.task;
+        resultsContent.querySelector('#tokenPosition').textContent = result.token_position || 'Next token';
+        resultsContent.querySelector('#inferenceTimeForward').textContent = `${result.inference_time}s`;
+        
+        // Populate token predictions table
+        const tbody = resultsContent.querySelector('#tokenPredictions');
+        tbody.innerHTML = '';
+        
+        if (result.top_tokens) {
+            result.top_tokens.forEach((token, index) => {
+                const row = document.createElement('tr');
+                // Replace whitespace characters with underscores for visibility
+                const displayToken = token.token.replace(/\s/g, '_');
+                row.innerHTML = `
+                    <td class="fw-bold">${index + 1}</td>
+                    <td><code>${this.escapeHtml(displayToken)}</code></td>
+                    <td><span class="badge bg-primary">${(token.probability * 100).toFixed(2)}%</span></td>
+                    <td class="font-monospace small">${token.logit.toFixed(4)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        // Replace container content
+        container.innerHTML = '';
+        container.appendChild(resultsContent);
+    }
+    
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
     
     drawCoordinateOverlay(img, result) {
