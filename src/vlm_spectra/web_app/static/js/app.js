@@ -279,6 +279,10 @@ class DemoApp {
         resultsContent.classList.remove('d-none');
         resultsContent.id = '';
         
+        // Generate unique IDs for collapsible sections
+        const timestamp = Date.now();
+        this.updateCollapsibleIds(resultsContent, timestamp);
+        
         // Populate image
         const img = resultsContent.querySelector('#resultImage');
         img.src = result.image_url;
@@ -310,6 +314,9 @@ class DemoApp {
         // Replace container content
         container.innerHTML = '';
         container.appendChild(resultsContent);
+        
+        // Add collapse icon toggle functionality
+        this.initializeCollapseIcons(resultsContent);
     }
     
     displayForwardResults(result) {
@@ -320,6 +327,10 @@ class DemoApp {
         const resultsContent = template.cloneNode(true);
         resultsContent.classList.remove('d-none');
         resultsContent.id = '';
+        
+        // Generate unique IDs for collapsible sections
+        const timestamp = Date.now();
+        this.updateCollapsibleIds(resultsContent, timestamp);
         
         // Populate data (no image display)
         resultsContent.querySelector('#imageSizeForward').textContent = `${result.image_size[0]}×${result.image_size[1]}`;
@@ -336,6 +347,9 @@ class DemoApp {
         // Replace container content
         container.innerHTML = '';
         container.appendChild(resultsContent);
+        
+        // Add collapse icon toggle functionality
+        this.initializeCollapseIcons(resultsContent);
     }
     
     createTokenPredictionsChart(resultsContent, topTokens) {
@@ -408,6 +422,62 @@ class DemoApp {
         
         // Create the plot
         Plotly.newPlot(chartContainer, data, layout, config);
+    }
+    
+    updateCollapsibleIds(element, timestamp) {
+        // Update IDs for generation results template
+        const idMappings = [
+            { old: 'imageSection', new: `imageSection_${timestamp}` },
+            { old: 'modelOutputSection', new: `modelOutputSection_${timestamp}` },
+            { old: 'predictionResultsSection', new: `predictionResultsSection_${timestamp}` },
+            { old: 'tokenPredictionsSection', new: `tokenPredictionsSection_${timestamp}` },
+            { old: 'analysisDetailsSection', new: `analysisDetailsSection_${timestamp}` }
+        ];
+        
+        idMappings.forEach(mapping => {
+            const collapseElement = element.querySelector(`#${mapping.old}`);
+            if (collapseElement) {
+                collapseElement.id = mapping.new;
+                
+                // Update corresponding button's data-bs-target
+                const button = element.querySelector(`[data-bs-target="#${mapping.old}"]`);
+                if (button) {
+                    button.setAttribute('data-bs-target', `#${mapping.new}`);
+                }
+            }
+        });
+    }
+    
+    initializeCollapseIcons(element) {
+        const toggleButtons = element.querySelectorAll('[data-bs-toggle="collapse"]');
+        
+        toggleButtons.forEach(button => {
+            const target = button.getAttribute('data-bs-target');
+            const collapseElement = element.querySelector(target);
+            const icon = button.querySelector('.collapse-icon');
+            
+            if (collapseElement && icon) {
+                // Set initial icon state based on collapse state
+                if (collapseElement.classList.contains('show')) {
+                    icon.textContent = '▼';
+                    button.setAttribute('aria-expanded', 'true');
+                } else {
+                    icon.textContent = '▶';
+                    button.setAttribute('aria-expanded', 'false');
+                }
+                
+                // Listen for collapse events
+                collapseElement.addEventListener('shown.bs.collapse', () => {
+                    icon.textContent = '▼';
+                    button.setAttribute('aria-expanded', 'true');
+                });
+                
+                collapseElement.addEventListener('hidden.bs.collapse', () => {
+                    icon.textContent = '▶';
+                    button.setAttribute('aria-expanded', 'false');
+                });
+            }
+        });
     }
     
     escapeHtml(text) {

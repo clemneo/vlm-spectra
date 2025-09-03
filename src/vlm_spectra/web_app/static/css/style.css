@@ -200,3 +200,53 @@ body {
     color: #ffffff !important;
     border-color: #32383e !important;
 }
+
+/* Collapsible sections styling */
+.collapse-icon {
+    transition: transform 0.2s ease-in-out;
+    font-size: 0.9rem;
+    display: inline-block;
+    color: #000;
+    font-weight: bold;
+}
+
+.card-header button {
+    color: #495057;
+    text-decoration: none !important;
+}
+
+.card-header button:hover {
+    color: #0d6efd;
+}
+
+.card-header button:focus {
+    box-shadow: none;
+    outline: none;
+}
+
+/* Smooth collapse transitions */
+.collapse {
+    transition: height 0.35s ease;
+}
+
+/* Results section specific styling */
+.card-header {
+    background-color: #f8f9fa;
+    padding: 0.75rem 1rem;
+}
+
+.card-header button {
+    padding: 0.25rem 0;
+    font-size: 1rem;
+    border: none;
+    background: none;
+}
+
+.card-header button:hover {
+    background: none;
+}
+
+/* Icon animation for expanded/collapsed state */
+.collapse:not(.show) ~ .card-header button .collapse-icon {
+    transform: rotate(-90deg);
+}

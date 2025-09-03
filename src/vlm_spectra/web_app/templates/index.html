@@ -117,91 +117,137 @@
     
     <!-- Results Template for Generation Analysis (hidden) -->
     <div id="generationResultsTemplate" class="d-none">
-        <div class="row">
-            <div class="col-md-6">
-                <h6>Uploaded Image</h6>
-                <div class="position-relative">
-                    <img id="resultImage" src="" alt="Uploaded image" class="img-fluid border">
-                    <canvas id="overlayCanvas" class="position-absolute top-0 start-0"></canvas>
-                </div>
-                <div class="mt-2">
-                    <small class="text-muted">
-                        Size: <span id="imageSize"></span>
-                    </small>
+        <!-- Uploaded Image Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#imageSection" aria-expanded="true">
+                    <span class="me-2 collapse-icon">▼</span>Uploaded Image
+                </button>
+            </div>
+            <div class="collapse show" id="imageSection">
+                <div class="card-body">
+                    <div class="position-relative">
+                        <img id="resultImage" src="" alt="Uploaded image" class="img-fluid border">
+                        <canvas id="overlayCanvas" class="position-absolute top-0 start-0"></canvas>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            Size: <span id="imageSize"></span>
+                        </small>
+                    </div>
                 </div>
             </div>
-            <div class="col-md-6">
-                <h6>Model Output</h6>
-                <div class="bg-light p-3 rounded mb-3" style="max-height: 200px; overflow-y: auto;">
-                    <pre id="modelOutput" class="mb-0 small"></pre>
+        </div>
+
+        <!-- Model Output Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#modelOutputSection" aria-expanded="true">
+                    <span class="me-2 collapse-icon">▼</span>Model Output
+                </button>
+            </div>
+            <div class="collapse show" id="modelOutputSection">
+                <div class="card-body">
+                    <div class="bg-light p-3 rounded" style="max-height: 200px; overflow-y: auto;">
+                        <pre id="modelOutput" class="mb-0 small"></pre>
+                    </div>
                 </div>
-                
-                <h6>Prediction Results</h6>
-                <table class="table table-sm">
-                    <tr>
-                        <th>Task:</th>
-                        <td id="taskText"></td>
-                    </tr>
-                    <tr>
-                        <th>Prefill:</th>
-                        <td id="prefillText" class="text-muted small"></td>
-                    </tr>
-                    <tr>
-                        <th>Prediction:</th>
-                        <td id="prediction"></td>
-                    </tr>
-                    <tr>
-                        <th>Accuracy:</th>
-                        <td>
-                            <span id="accuracyBadge"></span>
-                            <span id="distance" class="small text-muted"></span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Inference Time:</th>
-                        <td id="inferenceTime"></td>
-                    </tr>
-                </table>
+            </div>
+        </div>
+
+        <!-- Prediction Results Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#predictionResultsSection" aria-expanded="true">
+                    <span class="me-2 collapse-icon">▼</span>Prediction Results
+                </button>
+            </div>
+            <div class="collapse show" id="predictionResultsSection">
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <tr>
+                            <th>Task:</th>
+                            <td id="taskText"></td>
+                        </tr>
+                        <tr>
+                            <th>Prefill:</th>
+                            <td id="prefillText" class="text-muted small"></td>
+                        </tr>
+                        <tr>
+                            <th>Prediction:</th>
+                            <td id="prediction"></td>
+                        </tr>
+                        <tr>
+                            <th>Accuracy:</th>
+                            <td>
+                                <span id="accuracyBadge"></span>
+                                <span id="distance" class="small text-muted"></span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Inference Time:</th>
+                            <td id="inferenceTime"></td>
+                        </tr>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Results Template for Forward Pass Analysis (hidden) -->
     <div id="forwardResultsTemplate" class="d-none">
-        <div class="row">
-            <div class="col-12">
-                <h6>Top 10 Token Predictions</h6>
-                <div id="tokenPredictionsChart" style="height: 500px; width: 100%;"></div>
-                
-                <h6 class="mt-3">Analysis Details</h6>
-                <div class="row">
-                    <div class="col-md-6">
-                        <table class="table table-sm">
-                            <tr>
-                                <th>Task:</th>
-                                <td id="taskTextForward"></td>
-                            </tr>
-                            <tr>
-                                <th>Prefill:</th>
-                                <td id="prefillTextForward" class="text-muted small"></td>
-                            </tr>
-                            <tr>
-                                <th>Next Token Position:</th>
-                                <td id="tokenPosition"></td>
-                            </tr>
-                        </table>
-                    </div>
-                    <div class="col-md-6">
-                        <table class="table table-sm">
-                            <tr>
-                                <th>Image Size:</th>
-                                <td id="imageSizeForward"></td>
-                            </tr>
-                            <tr>
-                                <th>Inference Time:</th>
-                                <td id="inferenceTimeForward"></td>
-                            </tr>
-                        </table>
+        <!-- Token Predictions Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#tokenPredictionsSection" aria-expanded="true">
+                    <span class="me-2 collapse-icon">▼</span>Top 10 Token Predictions
+                </button>
+            </div>
+            <div class="collapse show" id="tokenPredictionsSection">
+                <div class="card-body">
+                    <div id="tokenPredictionsChart" style="height: 500px; width: 100%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Analysis Details Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#analysisDetailsSection" aria-expanded="true">
+                    <span class="me-2 collapse-icon">▼</span>Analysis Details
+                </button>
+            </div>
+            <div class="collapse show" id="analysisDetailsSection">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <table class="table table-sm">
+                                <tr>
+                                    <th>Task:</th>
+                                    <td id="taskTextForward"></td>
+                                </tr>
+                                <tr>
+                                    <th>Prefill:</th>
+                                    <td id="prefillTextForward" class="text-muted small"></td>
+                                </tr>
+                                <tr>
+                                    <th>Next Token Position:</th>
+                                    <td id="tokenPosition"></td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <table class="table table-sm">
+                                <tr>
+                                    <th>Image Size:</th>
+                                    <td id="imageSizeForward"></td>
+                                </tr>
+                                <tr>
+                                    <th>Inference Time:</th>
+                                    <td id="inferenceTimeForward"></td>
+                                </tr>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
