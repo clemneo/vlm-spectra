@@ -136,4 +136,4 @@ if __name__ == '__main__':
     model_thread.start()
     
     print("Demo will be available at http://localhost:55556")
-    app.run(host='0.0.0.0', port=55556, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=55556, debug=False, use_reloader=False)

@@ -328,28 +328,86 @@ class DemoApp {
         resultsContent.querySelector('#tokenPosition').textContent = result.token_position || 'Next token';
         resultsContent.querySelector('#inferenceTimeForward').textContent = `${result.inference_time}s`;
         
-        // Populate token predictions table
-        const tbody = resultsContent.querySelector('#tokenPredictions');
-        tbody.innerHTML = '';
-        
+        // Create interactive Plotly bar chart for token predictions
         if (result.top_tokens) {
-            result.top_tokens.forEach((token, index) => {
-                const row = document.createElement('tr');
-                // Replace whitespace characters with underscores for visibility
-                const displayToken = token.token.replace(/\s/g, '_');
-                row.innerHTML = `
-                    <td class="fw-bold">${index + 1}</td>
-                    <td><code>${this.escapeHtml(displayToken)}</code></td>
-                    <td><span class="badge bg-primary">${(token.probability * 100).toFixed(2)}%</span></td>
-                    <td class="font-monospace small">${token.logit.toFixed(4)}</td>
-                `;
-                tbody.appendChild(row);
-            });
+            this.createTokenPredictionsChart(resultsContent, result.top_tokens);
         }
         
         // Replace container content
         container.innerHTML = '';
         container.appendChild(resultsContent);
+    }
+    
+    createTokenPredictionsChart(resultsContent, topTokens) {
+        const chartContainer = resultsContent.querySelector('#tokenPredictionsChart');
+        
+        // Prepare data for the chart
+        const tokens = topTokens.map((token, index) => {
+            // Replace whitespace characters with underscores for visibility
+            return token.token.replace(/\s/g, '_');
+        });
+        
+        const probabilities = topTokens.map(token => (token.probability * 100));
+        const logits = topTokens.map(token => token.logit);
+        
+        // Create the bar chart data
+        const data = [{
+            x: tokens,
+            y: probabilities,
+            type: 'bar',
+            marker: {
+                color: '#0d6efd'
+            },
+            text: probabilities.map(p => `${p.toFixed(2)}%`),
+            textposition: 'outside',
+            hovertemplate: 
+                '<b>Token:</b> %{x}<br>' +
+                '<b>Probability:</b> %{y:.2f}%<br>' +
+                '<b>Logit:</b> %{customdata:.4f}<extra></extra>',
+            customdata: logits
+        }];
+        
+        // Configure the layout
+        const layout = {
+            title: {
+                text: 'Token Prediction Probabilities',
+                x: 0.5,
+                font: { size: 16 }
+            },
+            xaxis: {
+                title: 'Tokens',
+                showgrid: false,
+                tickfont: { family: 'monospace', size: 12 }
+            },
+            yaxis: {
+                title: 'Probability (%)',
+                showgrid: true,
+                gridcolor: '#f0f0f0'
+            },
+            margin: {
+                l: 60,
+                r: 60,
+                t: 60,
+                b: 120
+            },
+            plot_bgcolor: '#ffffff',
+            paper_bgcolor: '#ffffff',
+            font: {
+                family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                size: 12
+            }
+        };
+        
+        // Configure options
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d', 'autoScale2d'],
+            displaylogo: false
+        };
+        
+        // Create the plot
+        Plotly.newPlot(chartContainer, data, layout, config);
     }
     
     escapeHtml(text) {
