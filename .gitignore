@@ -17,3 +17,7 @@ tests/tmp/
 
 # Ruff
 .ruff_cache/
+src/vlm_spectra/web_app/static/images/
+src/vlm_spectra/web_app/static/images/
+src/vlm_spectra/web_app/static/uploads/
+src/vlm_spectra/web_app/static/uploads/

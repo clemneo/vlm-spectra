@@ -11,12 +11,14 @@ requires-python = ">=3.10"
 dependencies = [
     "accelerate>=1.7.0",
     "einops>=0.8.1",
+    "flask>=2.3.3",
     "pillow>=11.2.1",
     "pytest>=8.4.0",
     "ruff>=0.11.13",
     "torch>=2.7.1",
     "torchvision>=0.22.1",
     "transformers>=4.52.4",
+    "werkzeug>=2.3.7",
 ]
 
 [project.optional-dependencies]
