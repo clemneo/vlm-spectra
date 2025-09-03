@@ -234,7 +234,8 @@ class DemoApp {
         
         const formData = {
             filename: this.uploadedImage.filename,
-            task: document.getElementById('task').value
+            task: document.getElementById('task').value,
+            assistant_prefill: document.getElementById('assistantPrefill').value
         };
         
         try {
@@ -290,6 +291,7 @@ class DemoApp {
         
         resultsContent.querySelector('#modelOutput').textContent = result.output_text;
         resultsContent.querySelector('#taskText').textContent = result.task;
+        resultsContent.querySelector('#prefillText').textContent = result.prefill || '(none)';
         
         // Prediction
         const pred = result.prediction;
@@ -322,6 +324,7 @@ class DemoApp {
         // Populate data (no image display)
         resultsContent.querySelector('#imageSizeForward').textContent = `${result.image_size[0]}×${result.image_size[1]}`;
         resultsContent.querySelector('#taskTextForward').textContent = result.task;
+        resultsContent.querySelector('#prefillTextForward').textContent = result.prefill || '(none)';
         resultsContent.querySelector('#tokenPosition').textContent = result.token_position || 'Next token';
         resultsContent.querySelector('#inferenceTimeForward').textContent = `${result.inference_time}s`;
         

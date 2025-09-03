@@ -48,7 +48,8 @@ class ModelManager:
     def predict_from_image(
         self,
         image_path: str,
-        task: str
+        task: str,
+        assistant_prefill: str = ""
     ) -> Dict[str, Any]:
         """Run model prediction on uploaded image"""
         if not self.is_ready:
@@ -63,7 +64,7 @@ class ModelManager:
                 image = image.convert('RGB')
             
             # Prepare model inputs
-            inputs = self.model.prepare_messages(task, image)
+            inputs = self.model.prepare_messages(task, image, assistant_prefill=assistant_prefill)
             
             # Ensure inputs are on correct device
             for key, value in inputs.items():
@@ -94,6 +95,7 @@ class ModelManager:
                 'success': True,
                 'image_url': f'/{image_path}',
                 'task': task,
+                'prefill': assistant_prefill,
                 'prediction': {
                     'x': pred_x,
                     'y': pred_y
@@ -112,7 +114,8 @@ class ModelManager:
     def forward_pass_analysis(
         self,
         image_path: str,
-        task: str
+        task: str,
+        assistant_prefill: str = ""
     ) -> Dict[str, Any]:
         """Run forward pass analysis on uploaded image and return top token predictions"""
         if not self.is_ready:
@@ -128,7 +131,7 @@ class ModelManager:
                 image = image.convert('RGB')
             
             # Prepare model inputs
-            inputs = self.model.prepare_messages(task, image)
+            inputs = self.model.prepare_messages(task, image, assistant_prefill=assistant_prefill)
             
             # Ensure inputs are on correct device
             for key, value in inputs.items():
@@ -173,6 +176,7 @@ class ModelManager:
                 'success': True,
                 'image_url': f'/{image_path}',
                 'task': task,
+                'prefill': assistant_prefill,
                 'top_tokens': top_tokens,
                 'token_position': f"Position {inputs['input_ids'].shape[1]}",
                 'inference_time': round(inference_time, 2),

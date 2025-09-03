@@ -70,6 +70,19 @@
                                 <div class="form-text">The instruction given to the model</div>
                             </div>
                             
+                            <!-- Assistant Prefill -->
+                            <div class="mb-3">
+                                <label for="assistantPrefill" class="form-label">Assistant Prefill <span class="text-muted">(Optional)</span></label>
+                                <textarea class="form-control" id="assistantPrefill" name="assistantPrefill" rows="2" placeholder="Start the assistant's response..."></textarea>
+                                <div class="form-text">
+                                    <small class="text-info">
+                                        <i class="fas fa-info-circle"></i> 
+                                        Prefill text for the assistant's response. The model will continue from this text.
+                                        <br>Example: <code>{"action": "</code> for JSON format or <code>I need to click on</code> for descriptive response.
+                                    </small>
+                                </div>
+                            </div>
+                            
                             <div class="d-grid gap-2">
                                 <button type="button" class="btn btn-primary" id="analyzeGenerationBtn" disabled>
                                     <span class="spinner-border spinner-border-sm me-2 d-none" id="generationSpinner"></span>
@@ -130,6 +143,10 @@
                         <td id="taskText"></td>
                     </tr>
                     <tr>
+                        <th>Prefill:</th>
+                        <td id="prefillText" class="text-muted small"></td>
+                    </tr>
+                    <tr>
                         <th>Prediction:</th>
                         <td id="prediction"></td>
                     </tr>
@@ -176,6 +193,10 @@
                             <tr>
                                 <th>Task:</th>
                                 <td id="taskTextForward"></td>
+                            </tr>
+                            <tr>
+                                <th>Prefill:</th>
+                                <td id="prefillTextForward" class="text-muted small"></td>
                             </tr>
                             <tr>
                                 <th>Next Token Position:</th>

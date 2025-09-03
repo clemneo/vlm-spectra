@@ -82,7 +82,7 @@ class HookedVLM:
         return outputs
 
     ## TODO: rewrite to be more general
-    def prepare_messages(self, task: str, image: Image, append_text: str = "", return_text: bool = False):
+    def prepare_messages(self, task: str, image: Image, append_text: str = "", assistant_prefill: str = "", return_text: bool = False):
         messages = [
             {
                 "role": "user",
@@ -101,10 +101,24 @@ class HookedVLM:
             }
         ]
 
+        # Add assistant prefill if provided
+        if assistant_prefill:
+            messages.append({
+                "role": "assistant", 
+                "content": assistant_prefill
+            })
+
         # Preparation for inference
-        text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        if assistant_prefill:
+            # Use continue_final_message when we have assistant prefill
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, continue_final_message=True
+            )
+        else:
+            # Use add_generation_prompt when no prefill (current behavior)
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
 
         if append_text:
             text += append_text

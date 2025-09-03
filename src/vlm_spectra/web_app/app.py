@@ -70,6 +70,7 @@ def predict_from_uploaded_image():
         data = request.get_json()
         filename = data.get('filename')
         task = data.get('task', 'Click on the relevant element.')
+        assistant_prefill = data.get('assistant_prefill', '')
         
         if not filename:
             return jsonify({'error': 'No filename provided'}), 400
@@ -80,7 +81,8 @@ def predict_from_uploaded_image():
         
         result = model_manager.predict_from_image(
             image_path=image_path,
-            task=task
+            task=task,
+            assistant_prefill=assistant_prefill
         )
         
         return jsonify(result)
@@ -98,6 +100,7 @@ def forward_pass_analysis():
         data = request.get_json()
         filename = data.get('filename')
         task = data.get('task', 'Click on the relevant element.')
+        assistant_prefill = data.get('assistant_prefill', '')
         
         if not filename:
             return jsonify({'error': 'No filename provided'}), 400
@@ -108,7 +111,8 @@ def forward_pass_analysis():
         
         result = model_manager.forward_pass_analysis(
             image_path=image_path,
-            task=task
+            task=task,
+            assistant_prefill=assistant_prefill
         )
         
         return jsonify(result)
