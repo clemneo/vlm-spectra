@@ -344,6 +344,11 @@ class DemoApp {
             this.createTokenPredictionsChart(resultsContent, result.top_tokens);
         }
         
+        // Set up token layer analysis if data is available
+        if (result.layer_probabilities && result.top_tokens) {
+            this.setupTokenLayerAnalysis(resultsContent, result.top_tokens, result.layer_probabilities);
+        }
+        
         // Replace container content
         container.innerHTML = '';
         container.appendChild(resultsContent);
@@ -424,6 +429,120 @@ class DemoApp {
         Plotly.newPlot(chartContainer, data, layout, config);
     }
     
+    setupTokenLayerAnalysis(resultsContent, topTokens, layerProbabilities) {
+        const tokenSelector = resultsContent.querySelector('#tokenSelector');
+        const chartContainer = resultsContent.querySelector('#tokenLayerChart');
+        
+        if (!tokenSelector || !chartContainer) {
+            console.warn('Token layer analysis elements not found');
+            return;
+        }
+        
+        // Populate token selector dropdown
+        tokenSelector.innerHTML = '';
+        topTokens.forEach((token, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            // Replace whitespace with underscores for display, similar to top 10 token predictions
+            const displayToken = token.token.replace(/\s/g, '_');
+            option.textContent = `${displayToken} (${(token.probability * 100).toFixed(2)}%)`;
+            tokenSelector.appendChild(option);
+        });
+        
+        // Store data for chart updates
+        tokenSelector.dataset.topTokens = JSON.stringify(topTokens);
+        tokenSelector.dataset.layerProbabilities = JSON.stringify(layerProbabilities);
+        
+        // Create initial chart for first token
+        this.createTokenLayerChart(chartContainer, topTokens, layerProbabilities, 0);
+        
+        // Add event listener for token selection changes
+        tokenSelector.addEventListener('change', (event) => {
+            const selectedIndex = parseInt(event.target.value);
+            this.createTokenLayerChart(chartContainer, topTokens, layerProbabilities, selectedIndex);
+        });
+    }
+    
+    createTokenLayerChart(chartContainer, topTokens, layerProbabilities, selectedTokenIndex) {
+        if (!chartContainer || !topTokens || !layerProbabilities) return;
+        
+        const selectedToken = topTokens[selectedTokenIndex];
+        const numLayers = layerProbabilities.length;
+        
+        // Replace whitespace with underscores for display consistency
+        const displayToken = selectedToken.token.replace(/\s/g, '_');
+        
+        // Extract probabilities for the selected token across all layers
+        const layerNumbers = Array.from({length: numLayers}, (_, i) => i);
+        const probabilities = layerProbabilities.map(layerProbs => layerProbs[selectedTokenIndex] * 100);
+        
+        // Create the line chart data
+        const data = [{
+            x: layerNumbers,
+            y: probabilities,
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: `Token: "${displayToken}"`,
+            line: {
+                color: '#0d6efd',
+                width: 3
+            },
+            marker: {
+                size: 6,
+                color: '#0d6efd'
+            },
+            hovertemplate: 
+                '<b>Layer:</b> %{x}<br>' +
+                '<b>Probability:</b> %{y:.3f}%<br>' +
+                `<b>Token:</b> "${displayToken}"<extra></extra>`
+        }];
+        
+        // Configure the layout
+        const layout = {
+            title: {
+                text: `Token Probability Over Layers: "${displayToken}"`,
+                x: 0.5,
+                font: { size: 16 }
+            },
+            xaxis: {
+                title: 'Layer Number',
+                showgrid: true,
+                gridcolor: '#f0f0f0',
+                tickmode: 'linear',
+                dtick: 1
+            },
+            yaxis: {
+                title: 'Probability (%)',
+                showgrid: true,
+                gridcolor: '#f0f0f0',
+                range: [0, 100]  // Fixed y-axis range from 0% to 100%
+            },
+            margin: {
+                l: 60,
+                r: 60,
+                t: 60,
+                b: 60
+            },
+            plot_bgcolor: '#ffffff',
+            paper_bgcolor: '#ffffff',
+            font: {
+                family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                size: 12
+            }
+        };
+        
+        // Configure options
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d', 'autoScale2d'],
+            displaylogo: false
+        };
+        
+        // Create or update the plot
+        Plotly.newPlot(chartContainer, data, layout, config);
+    }
+    
     updateCollapsibleIds(element, timestamp) {
         // Update IDs for generation results template
         const idMappings = [
@@ -431,6 +550,7 @@ class DemoApp {
             { old: 'modelOutputSection', new: `modelOutputSection_${timestamp}` },
             { old: 'predictionResultsSection', new: `predictionResultsSection_${timestamp}` },
             { old: 'tokenPredictionsSection', new: `tokenPredictionsSection_${timestamp}` },
+            { old: 'tokenLayerSection', new: `tokenLayerSection_${timestamp}` },
             { old: 'analysisDetailsSection', new: `analysisDetailsSection_${timestamp}` }
         ];
         

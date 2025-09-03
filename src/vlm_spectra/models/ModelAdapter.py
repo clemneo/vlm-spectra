@@ -178,6 +178,14 @@ class Qwen2_5_VLModelAdapter(ModelAdapter):
     def lm_head_dim(self):
         return self.model.language_model.config.hidden_size // self.model.language_model.config.num_attention_heads # not sure if this is correct
     
+    @property
+    def lm_head(self):
+        return self.model.lm_head
+    
+    @property
+    def lm_norm(self):
+        return self.model.language_model.norm
+    
     def compute_per_head_contributions(self, concatenated_heads: torch.Tensor, layer: int) -> torch.Tensor:
         """
         Compute individual head contributions to residual stream for Qwen2.5-VL

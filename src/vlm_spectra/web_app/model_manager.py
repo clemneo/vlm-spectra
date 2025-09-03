@@ -117,7 +117,7 @@ class ModelManager:
         task: str,
         assistant_prefill: str = ""
     ) -> Dict[str, Any]:
-        """Run forward pass analysis on uploaded image and return top token predictions"""
+        """Run forward pass analysis on uploaded image and return top token predictions and layer-wise probabilities"""
         if not self.is_ready:
             raise RuntimeError("Model not ready")
             
@@ -142,12 +142,13 @@ class ModelManager:
                         if torch.is_tensor(subvalue):
                             value[subkey] = subvalue.to(self.model.device)
             
-            # Run forward pass to get logits
+            # Run forward pass with cache to get layer-wise hidden states
             start_time = time.time()
-            outputs = self.model.forward(inputs)
+            with self.model.run_with_cache(["lm_resid_post"]):
+                outputs = self.model.forward(inputs)
             inference_time = time.time() - start_time
             
-            # Extract logits from the last token position
+            # Extract logits from the last token position (final layer)
             logits = outputs.logits[0, -1, :]  # [vocab_size]
             
             # Get probabilities
@@ -172,12 +173,46 @@ class ModelManager:
                     'logit': top_logits[i].item()
                 })
             
+            # Compute layer-wise probabilities for top 10 tokens
+            layer_probabilities = []
+            top_token_ids = [token['token_id'] for token in top_tokens]
+            
+            # Get language model head and normalization layer for computing logits from hidden states
+            lm_head = self.model.adapter.lm_head
+            norm_layer = self.model.adapter.lm_norm
+            
+            # Process each layer's hidden states
+            for layer_idx in range(self.model.adapter.lm_num_layers):
+                cache_key = ("lm_resid_post", layer_idx)
+                if cache_key in self.model.cache:
+                    # Get hidden state for last token position at this layer
+                    hidden_state = self.model.cache[cache_key][0, -1, :]  # [hidden_dim]
+                    
+                    # Apply RMSNorm before language model head (crucial step!)
+                    # Ensure hidden_state is on the same device as norm_layer
+                    hidden_state = hidden_state.to(norm_layer.weight.device)
+                    normalized_hidden = norm_layer(hidden_state)  # [hidden_dim]
+                    
+                    # Compute logits for this layer using normalized hidden state
+                    layer_logits = lm_head(normalized_hidden)  # [vocab_size]
+                    
+                    # Get probabilities
+                    layer_probs = F.softmax(layer_logits, dim=-1)
+                    
+                    # Extract probabilities for our top 10 tokens
+                    layer_token_probs = []
+                    for token_id in top_token_ids:
+                        layer_token_probs.append(layer_probs[token_id].item())
+                    
+                    layer_probabilities.append(layer_token_probs)
+            
             return {
                 'success': True,
                 'image_url': f'/{image_path}',
                 'task': task,
                 'prefill': assistant_prefill,
                 'top_tokens': top_tokens,
+                'layer_probabilities': layer_probabilities,  # New field: [num_layers][10] probabilities
                 'token_position': f"Position {inputs['input_ids'].shape[1]}",
                 'inference_time': round(inference_time, 2),
                 'image_size': image.size
