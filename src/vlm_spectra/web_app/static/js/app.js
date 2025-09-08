@@ -6,6 +6,7 @@ class DemoApp {
         this.uploadedImage = null;
         
         this.initializeEventListeners();
+        this.checkDependencies();
         this.checkModelStatus();
     }
     
@@ -172,6 +173,60 @@ class DemoApp {
         if (this.modelReady) {
             document.getElementById('analyzeGenerationBtn').disabled = false;
             document.getElementById('analyzeForwardBtn').disabled = false;
+        }
+    }
+    
+    checkDependencies() {
+        const dependencies = [
+            {
+                name: 'Plotly',
+                check: () => typeof Plotly !== 'undefined',
+                elementId: 'plotlyStatus'
+            },
+            {
+                name: 'Bootstrap',
+                check: () => typeof bootstrap !== 'undefined' || typeof window.bootstrap !== 'undefined',
+                elementId: 'bootstrapStatus'
+            },
+            {
+                name: 'FontAwesome',
+                check: () => document.querySelectorAll('link[href*="fontawesome"]').length > 0 || document.querySelectorAll('script[src*="fontawesome"]').length > 0,
+                elementId: 'fontawesomeStatus'
+            }
+        ];
+        
+        let allLoaded = true;
+        const failedDeps = [];
+        
+        dependencies.forEach(dep => {
+            const element = document.getElementById(dep.elementId);
+            if (!element) return;
+            
+            if (dep.check()) {
+                element.className = 'badge bg-success';
+                element.innerHTML = `<i class="fas fa-check me-1"></i>${dep.name}`;
+            } else {
+                element.className = 'badge bg-danger';
+                element.innerHTML = `<i class="fas fa-times me-1"></i>${dep.name}`;
+                allLoaded = false;
+                failedDeps.push(dep.name);
+            }
+        });
+        
+        const statusCard = document.getElementById('dependenciesStatus');
+        const messageElement = document.getElementById('dependenciesMessage');
+        
+        if (allLoaded) {
+            statusCard.className = 'alert alert-success';
+            messageElement.innerHTML = '<i class="fas fa-check-circle me-1"></i>All dependencies loaded successfully!';
+        } else {
+            statusCard.className = 'alert alert-warning';
+            messageElement.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i>Some dependencies failed to load: ${failedDeps.join(', ')}. <strong>Please refresh the page.</strong>`;
+        }
+        
+        // Recheck dependencies after a short delay in case they're still loading
+        if (!allLoaded) {
+            setTimeout(() => this.checkDependencies(), 2000);
         }
     }
     
@@ -360,6 +415,13 @@ class DemoApp {
     createTokenPredictionsChart(resultsContent, topTokens) {
         const chartContainer = resultsContent.querySelector('#tokenPredictionsChart');
         
+        // Check if Plotly is available
+        if (typeof Plotly === 'undefined') {
+            console.error('Plotly is not loaded');
+            chartContainer.innerHTML = '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle me-2"></i>Chart library not loaded. Please refresh the page.</div>';
+            return;
+        }
+        
         // Prepare data for the chart
         const tokens = topTokens.map((token, index) => {
             // Replace whitespace characters with underscores for visibility
@@ -465,6 +527,13 @@ class DemoApp {
     
     createTokenLayerChart(chartContainer, topTokens, layerProbabilities, selectedTokenIndex) {
         if (!chartContainer || !topTokens || !layerProbabilities) return;
+        
+        // Check if Plotly is available
+        if (typeof Plotly === 'undefined') {
+            console.error('Plotly is not loaded');
+            chartContainer.innerHTML = '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle me-2"></i>Chart library not loaded. Please refresh the page.</div>';
+            return;
+        }
         
         const selectedToken = topTokens[selectedTokenIndex];
         const numLayers = layerProbabilities.length;

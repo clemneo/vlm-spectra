@@ -26,6 +26,34 @@
             </div>
         </div>
         
+        <!-- Dependencies Status -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div id="dependenciesStatus" class="alert alert-secondary">
+                    <div class="d-flex align-items-center">
+                        <span class="me-3"><strong>Dependencies:</strong></span>
+                        <div class="d-flex gap-3 flex-wrap">
+                            <span id="plotlyStatus" class="badge bg-secondary">
+                                <i class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></i>
+                                Plotly
+                            </span>
+                            <span id="bootstrapStatus" class="badge bg-secondary">
+                                <i class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></i>
+                                Bootstrap
+                            </span>
+                            <span id="fontawesomeStatus" class="badge bg-secondary">
+                                <i class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></i>
+                                FontAwesome
+                            </span>
+                        </div>
+                    </div>
+                    <div id="dependenciesMessage" class="mt-2 small text-muted">
+                        Loading external libraries...
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <div class="row">
             <!-- Controls Panel -->
             <div class="col-md-4">
