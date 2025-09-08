@@ -300,6 +300,8 @@ class HookedVLM:
                     module = self.model.language_model.layers[hook.layer].self_attn.o_proj
                 elif hook.module_name == 'mlp':
                     module = self.model.language_model.layers[hook.layer].mlp
+                elif hook.module_name == 'self_attn':
+                    module = self.model.language_model.layers[hook.layer].self_attn
                 else:
                     raise ValueError(f"Unsupported module name: {hook.module_name}")
             elif hasattr(hook, 'module'):
