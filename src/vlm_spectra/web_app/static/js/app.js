@@ -413,6 +413,15 @@ class DemoApp {
             this.setupTokenLayerAnalysis(resultsContent, result.top_tokens, result.layer_probabilities);
         }
         
+        // Set up DLA analysis if data is available (populate token selector)
+        this.setupDlaAnalysis(resultsContent, result.top_tokens);
+        
+        // Enable DLA button now that forward pass analysis is complete
+        const dlaBtn = resultsContent.querySelector('#analyzeDlaBtn');
+        if (dlaBtn) {
+            dlaBtn.disabled = false;
+        }
+        
         // Replace container content
         container.innerHTML = '';
         container.appendChild(resultsContent);
@@ -629,6 +638,7 @@ class DemoApp {
             { old: 'predictionResultsSection', new: `predictionResultsSection_${timestamp}` },
             { old: 'tokenPredictionsSection', new: `tokenPredictionsSection_${timestamp}` },
             { old: 'tokenLayerSection', new: `tokenLayerSection_${timestamp}` },
+            { old: 'dlaSection', new: `dlaSection_${timestamp}` },
             { old: 'analysisDetailsSection', new: `analysisDetailsSection_${timestamp}` }
         ];
         
@@ -747,6 +757,272 @@ class DemoApp {
                 <strong>Error:</strong> ${message}
             </div>
         `;
+    }
+    
+    setupDlaAnalysis(resultsContent, topTokens) {
+        const dlaTokenSelector = resultsContent.querySelector('#dlaTokenSelector');
+        const dlaBtn = resultsContent.querySelector('#analyzeDlaBtn');
+        
+        if (!dlaTokenSelector || !topTokens || !dlaBtn) {
+            return;
+        }
+        
+        // Populate DLA token selector dropdown
+        dlaTokenSelector.innerHTML = '';
+        topTokens.forEach((token, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            // Replace whitespace with underscores for display
+            const displayToken = token.token.replace(/\s/g, '_');
+            option.textContent = `${displayToken} (${(token.probability * 100).toFixed(2)}%)`;
+            dlaTokenSelector.appendChild(option);
+        });
+        
+        // Store data for DLA analysis
+        dlaTokenSelector.dataset.topTokens = JSON.stringify(topTokens);
+        
+        // Add event listener to DLA button in this specific instance
+        dlaBtn.addEventListener('click', () => {
+            this.handleDlaAnalysis();
+        });
+    }
+    
+    async handleDlaAnalysis() {
+        if (!this.modelReady || this.isPredicting || !this.uploadedImage) {
+            return;
+        }
+        
+        this.isPredicting = true;
+        const button = document.getElementById('analyzeDlaBtn');
+        const spinner = document.getElementById('dlaSpinner');
+        
+        // Update UI
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+        
+        const formData = {
+            filename: this.uploadedImage.filename,
+            task: document.getElementById('task').value,
+            assistant_prefill: document.getElementById('assistantPrefill').value
+        };
+        
+        try {
+            const response = await fetch('/api/dla', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                // Store DLA data globally for chart updates
+                this.dlaData = result.dla_data;
+                this.dlaTopTokens = result.top_tokens;
+                
+                // Update DLA chart with default settings
+                this.updateDlaChart();
+                
+                // Add event listeners for selector changes
+                const tokenSelector = document.getElementById('dlaTokenSelector');
+                const componentSelector = document.getElementById('dlaComponentSelector');
+                
+                tokenSelector.addEventListener('change', () => {
+                    this.updateDlaChart();
+                });
+                
+                componentSelector.addEventListener('change', () => {
+                    this.updateDlaChart();
+                });
+                
+            } else {
+                this.showError(result.error || 'DLA analysis failed');
+            }
+        } catch (error) {
+            console.error('Error during DLA analysis:', error);
+            this.showError('Failed to connect to server for DLA analysis');
+        } finally {
+            // Reset UI
+            button.disabled = false;
+            spinner.classList.add('d-none');
+            this.isPredicting = false;
+        }
+    }
+    
+    updateDlaChart() {
+        if (!this.dlaData || !this.dlaTopTokens) {
+            console.warn('No DLA data available');
+            return;
+        }
+        
+        const tokenSelector = document.getElementById('dlaTokenSelector');
+        const componentSelector = document.getElementById('dlaComponentSelector');
+        const chartContainer = document.getElementById('dlaChart');
+        
+        if (!tokenSelector || !componentSelector || !chartContainer) {
+            console.warn('DLA UI elements not found');
+            return;
+        }
+        
+        const selectedTokenIndex = parseInt(tokenSelector.value);
+        const componentType = componentSelector.value;
+        const selectedToken = this.dlaTopTokens[selectedTokenIndex];
+        const displayToken = selectedToken.token.replace(/\s/g, '_');
+        
+        // Check if Plotly is available
+        if (typeof Plotly === 'undefined') {
+            console.error('Plotly is not loaded');
+            chartContainer.innerHTML = '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle me-2"></i>Chart library not loaded. Please refresh the page.</div>';
+            return;
+        }
+        
+        if (componentType === 'att_mlp') {
+            this.createAttentionMlpHeatmap(chartContainer, selectedTokenIndex, displayToken);
+        } else {
+            this.createAttentionHeadsHeatmap(chartContainer, selectedTokenIndex, displayToken);
+        }
+    }
+    
+    createAttentionMlpHeatmap(chartContainer, tokenIndex, displayToken) {
+        const numLayers = this.dlaData.num_layers;
+        const attContribs = this.dlaData.layer_att_contributions;
+        const mlpContribs = this.dlaData.mlp_contributions;
+        
+        // Create heatmap with X-axis as Att-MLP pairs and Y-axis as layers
+        const zValues = [];
+        const yLabels = [];
+        const xLabels = ['Attention', 'MLP'];
+        
+        // Build data: each row is a layer, each column is Att or MLP
+        for (let layer = 0; layer < numLayers; layer++) {
+            const layerValues = [
+                attContribs[layer][tokenIndex],  // Attention contribution
+                mlpContribs[layer][tokenIndex]   // MLP contribution
+            ];
+            zValues.push(layerValues);
+            yLabels.push(`Layer ${layer}`);
+        }
+        
+        const data = [{
+            z: zValues,
+            type: 'heatmap',
+            colorscale: 'RdBu',
+            zmid: 0,  // Center colormap at 0
+            hovertemplate: 
+                '<b>Layer:</b> %{y}<br>' +
+                '<b>Component:</b> %{x}<br>' +
+                '<b>Token:</b> ' + displayToken + '<br>' +
+                '<b>Contribution:</b> %{z:.4f}<extra></extra>',
+            showscale: true,
+            colorbar: {
+                title: 'Contribution'
+            }
+        }];
+        
+        const layout = {
+            title: {
+                text: `Direct Logit Attribution: "${displayToken}" (Attention + MLP)`,
+                x: 0.5,
+                font: { size: 16 }
+            },
+            xaxis: {
+                title: 'Component Type',
+                tickvals: [0, 1],
+                ticktext: xLabels,
+                showgrid: false
+            },
+            yaxis: {
+                title: 'Layer',
+                tickvals: Array.from({length: yLabels.length}, (_, i) => i),
+                ticktext: yLabels,
+                showgrid: false
+            },
+            margin: {
+                l: 80,
+                r: 60,
+                t: 60,
+                b: 60
+            },
+            plot_bgcolor: '#ffffff',
+            paper_bgcolor: '#ffffff'
+        };
+        
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d', 'autoScale2d'],
+            displaylogo: false
+        };
+        
+        Plotly.newPlot(chartContainer, data, layout, config);
+    }
+    
+    createAttentionHeadsHeatmap(chartContainer, tokenIndex, displayToken) {
+        const numLayers = this.dlaData.num_layers;
+        const numHeads = this.dlaData.num_heads;
+        const headContribs = this.dlaData.head_contributions;
+        
+        // Create 2D array for heatmap: [layers][heads]
+        const zValues = [];
+        
+        for (let layer = 0; layer < numLayers; layer++) {
+            const layerHeads = [];
+            for (let head = 0; head < numHeads; head++) {
+                layerHeads.push(headContribs[layer][head][tokenIndex]);
+            }
+            zValues.push(layerHeads);
+        }
+        
+        const data = [{
+            z: zValues,
+            type: 'heatmap',
+            colorscale: 'RdBu',
+            zmid: 0,  // Center colormap at 0
+            hovertemplate: 
+                '<b>Layer:</b> %{y}<br>' +
+                '<b>Head:</b> %{x}<br>' +
+                '<b>Token:</b> ' + displayToken + '<br>' +
+                '<b>Contribution:</b> %{z:.4f}<extra></extra>',
+            showscale: true,
+            colorbar: {
+                title: 'Contribution'
+            }
+        }];
+        
+        const layout = {
+            title: {
+                text: `Direct Logit Attribution: "${displayToken}" (Attention Heads)`,
+                x: 0.5,
+                font: { size: 16 }
+            },
+            xaxis: {
+                title: 'Head Number',
+                showgrid: false
+            },
+            yaxis: {
+                title: 'Layer Number',
+                showgrid: false
+            },
+            margin: {
+                l: 60,
+                r: 60,
+                t: 60,
+                b: 60
+            },
+            plot_bgcolor: '#ffffff',
+            paper_bgcolor: '#ffffff'
+        };
+        
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d', 'autoScale2d'],
+            displaylogo: false
+        };
+        
+        Plotly.newPlot(chartContainer, data, layout, config);
     }
 }
 

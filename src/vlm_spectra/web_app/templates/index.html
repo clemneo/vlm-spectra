@@ -259,6 +259,45 @@
             </div>
         </div>
 
+        <!-- Direct Logit Attribution Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#dlaSection" aria-expanded="false">
+                    <span class="me-2 collapse-icon">▶</span>Direct Logit Attribution
+                </button>
+            </div>
+            <div class="collapse" id="dlaSection">
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="dlaTokenSelector" class="form-label">Select Token:</label>
+                            <select class="form-select" id="dlaTokenSelector">
+                                <option value="0">Loading...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="dlaComponentSelector" class="form-label">Component View:</label>
+                            <select class="form-select" id="dlaComponentSelector">
+                                <option value="att_mlp">Attention + MLP</option>
+                                <option value="heads_only">Attention Heads Only</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-primary" id="analyzeDlaBtn" disabled>
+                            <span class="spinner-border spinner-border-sm me-2 d-none" id="dlaSpinner"></span>
+                            Analyze DLA
+                        </button>
+                        <small class="text-muted ms-3">
+                            <i class="fas fa-info-circle"></i> 
+                            Shows how different model components contribute to the selected token's prediction
+                        </small>
+                    </div>
+                    <div id="dlaChart" style="height: 500px; width: 100%;"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Analysis Details Section -->
         <div class="card mb-3">
             <div class="card-header p-2">
