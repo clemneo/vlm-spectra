@@ -6,8 +6,11 @@ class DemoApp {
         this.uploadedImage = null;
         
         this.initializeEventListeners();
-        this.checkDependencies();
-        this.checkModelStatus();
+        // Delay initial checks to let external resources load
+        setTimeout(() => {
+            this.checkDependencies();
+            this.checkModelStatus();
+        }, 500);
     }
     
     initializeEventListeners() {
@@ -190,7 +193,7 @@ class DemoApp {
             },
             {
                 name: 'FontAwesome',
-                check: () => document.querySelectorAll('link[href*="fontawesome"]').length > 0 || document.querySelectorAll('script[src*="fontawesome"]').length > 0,
+                check: () => document.querySelectorAll('link[href*="font-awesome"]').length > 0,
                 elementId: 'fontawesomeStatus'
             }
         ];
@@ -202,12 +205,20 @@ class DemoApp {
             const element = document.getElementById(dep.elementId);
             if (!element) return;
             
-            if (dep.check()) {
-                element.className = 'badge bg-success';
-                element.innerHTML = `<i class="fas fa-check me-1"></i>${dep.name}`;
-            } else {
-                element.className = 'badge bg-danger';
-                element.innerHTML = `<i class="fas fa-times me-1"></i>${dep.name}`;
+            try {
+                if (dep.check()) {
+                    element.className = 'badge bg-success';
+                    element.innerHTML = `<i class="fas fa-check me-1"></i>${dep.name}`;
+                } else {
+                    element.className = 'badge bg-danger';
+                    element.innerHTML = `<i class="fas fa-times me-1"></i>${dep.name}`;
+                    allLoaded = false;
+                    failedDeps.push(dep.name);
+                }
+            } catch (error) {
+                console.warn(`Error checking dependency ${dep.name}:`, error);
+                element.className = 'badge bg-warning';
+                element.innerHTML = `<i class="fas fa-question me-1"></i>${dep.name}`;
                 allLoaded = false;
                 failedDeps.push(dep.name);
             }
@@ -222,10 +233,8 @@ class DemoApp {
         } else {
             statusCard.className = 'alert alert-warning';
             messageElement.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i>Some dependencies failed to load: ${failedDeps.join(', ')}. <strong>Please refresh the page.</strong>`;
-        }
-        
-        // Recheck dependencies after a short delay in case they're still loading
-        if (!allLoaded) {
+            
+            // Recheck dependencies after a delay in case they're still loading
             setTimeout(() => this.checkDependencies(), 2000);
         }
     }
