@@ -49,6 +49,11 @@ except ImportError:
 class ModelAdapter(ABC):
     def __init__(self, model):
         self.model = model
+        self.processor = None
+    
+    def set_processor(self, processor):
+        """Set the processor for this adapter"""
+        self.processor = processor
     
     @property
     @abstractmethod
@@ -114,6 +119,16 @@ class ModelAdapter(ABC):
             
         Returns:
             [batch, seq_len, num_heads, hidden_size] - per-head contributions to residual stream
+        """
+        pass
+    
+    @abstractmethod
+    def get_image_token_id(self) -> int:
+        """
+        Get the token ID used for image patches in this model
+        
+        Returns:
+            Token ID for image patches
         """
         pass
 
@@ -326,3 +341,14 @@ class Qwen2_5_VLModelAdapter(ModelAdapter):
     def _format_attn_pattern(self, cache_item: torch.Tensor) -> torch.Tensor:
         # Attention patterns are computed tensors [batch, num_heads, seq_len, seq_len]
         return cache_item.detach()
+    
+    def get_image_token_id(self) -> int:
+        """
+        Get the token ID used for image patches in Qwen2.5-VL (<|image_pad|>)
+        
+        Returns:
+            Token ID for <|image_pad|> token
+        """
+        if self.processor is None:
+            raise RuntimeError("Processor not set. Call set_processor() first.")
+        return self.processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")

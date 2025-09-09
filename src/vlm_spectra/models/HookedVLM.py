@@ -35,6 +35,7 @@ class HookedVLM:
             self.device = device
 
         self.adapter = get_model_adapter(self.model)
+        self.adapter.set_processor(self.processor)
         self.cache = None
 
     def generate(
@@ -431,3 +432,32 @@ class HookedVLM:
                     patch_num += 1
         
         return overlay_image
+
+    def get_image_token_range(self, inputs) -> tuple[int, int]:
+        """
+        Get the start and end indices of image tokens in the input sequence
+        
+        Args:
+            inputs: The processed inputs from prepare_messages()
+            
+        Returns:
+            Tuple of (start_index, end_index) where both indices are inclusive
+            
+        Raises:
+            ValueError: If no image tokens are found in the sequence
+        """
+        # Extract input_ids and get image token ID from adapter
+        input_ids = inputs['input_ids'].squeeze(0)
+        image_token_id = self.adapter.get_image_token_id()
+        
+        # Find all positions with image tokens
+        image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)[0]
+        
+        if len(image_token_positions) == 0:
+            raise ValueError("No image tokens found in the input sequence")
+        
+        # Return first and last positions (both inclusive)
+        start_index = image_token_positions[0].item()
+        end_index = image_token_positions[-1].item()
+        
+        return start_index, end_index
