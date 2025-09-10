@@ -259,6 +259,109 @@
             </div>
         </div>
 
+        <!-- Attention Explorer Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#attentionSection" aria-expanded="false">
+                    <span class="me-2 collapse-icon">▶</span>Attention Explorer
+                </button>
+            </div>
+            <div class="collapse" id="attentionSection">
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="attentionLayerSelector" class="form-label">Select Layer:</label>
+                            <select class="form-select" id="attentionLayerSelector">
+                                <option value="">Select a layer...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="attentionHeadSelector" class="form-label">Select Head:</label>
+                            <select class="form-select" id="attentionHeadSelector">
+                                <option value="">Select a head...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-primary" id="analyzeAttentionBtn" disabled>
+                            <span class="spinner-border spinner-border-sm me-2 d-none" id="attentionSpinner"></span>
+                            Analyze Attention
+                        </button>
+                        <small class="text-muted ms-3">
+                            <i class="fas fa-info-circle"></i> 
+                            Visualize attention patterns from the last token to all image patches and text tokens
+                        </small>
+                    </div>
+                    
+                    <!-- Attention visualization container -->
+                    <div id="attentionVisualization" class="d-none">
+                        <!-- Attention summary info -->
+                        <div class="mb-3">
+                            <div class="alert alert-info">
+                                <strong>Viewing:</strong> <span id="attentionCurrentView">Layer 0, Head 0</span> | 
+                                <strong>Query:</strong> <span id="attentionQueryInfo">Last token position</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Main visualization area with two columns -->
+                        <div class="row">
+                            <!-- Left column: Image and text -->
+                            <div class="col-md-6">
+                                <!-- Image with attention overlay -->
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Image Attention Overlay</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="position-relative">
+                                            <img id="attentionImage" src="" alt="Image with attention overlay" class="img-fluid border">
+                                            <canvas id="attentionOverlayCanvas" class="position-absolute top-0 start-0"></canvas>
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted" id="attentionImageInfo">Hover over image patches to see attention weights</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Text tokens with attention highlighting -->
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Text Token Attention</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="attentionTextContainer" style="max-height: 300px; overflow-y: auto; font-family: monospace; line-height: 1.6;">
+                                            <!-- Text tokens will be inserted here -->
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">Hover over tokens to see attention weights. Darker background = higher attention.</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Right column: Attention heatmap -->
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Attention Heatmap</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="attentionHeatmap" style="height: 500px; width: 100%;"></div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">
+                                                Heatmap shows attention weights from the query token to all positions. 
+                                                Left side: image patches, Right side: text tokens.
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Direct Logit Attribution Section -->
         <div class="card mb-3">
             <div class="card-header p-2">

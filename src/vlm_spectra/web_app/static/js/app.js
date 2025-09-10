@@ -413,6 +413,11 @@ class DemoApp {
             this.setupTokenLayerAnalysis(resultsContent, result.top_tokens, result.layer_probabilities);
         }
         
+        // Set up attention explorer if model info is available
+        if (result.model_info) {
+            this.setupAttentionExplorer(resultsContent, result.model_info);
+        }
+        
         // Set up DLA analysis if data is available (populate token selector)
         this.setupDlaAnalysis(resultsContent, result.top_tokens);
         
@@ -638,6 +643,7 @@ class DemoApp {
             { old: 'predictionResultsSection', new: `predictionResultsSection_${timestamp}` },
             { old: 'tokenPredictionsSection', new: `tokenPredictionsSection_${timestamp}` },
             { old: 'tokenLayerSection', new: `tokenLayerSection_${timestamp}` },
+            { old: 'attentionSection', new: `attentionSection_${timestamp}` },
             { old: 'dlaSection', new: `dlaSection_${timestamp}` },
             { old: 'analysisDetailsSection', new: `analysisDetailsSection_${timestamp}` }
         ];
@@ -1023,6 +1029,577 @@ class DemoApp {
         };
         
         Plotly.newPlot(chartContainer, data, layout, config);
+    }
+    
+    addImageInteractions(img, canvas, patches) {
+        // Add hover functionality to image
+        const handleImageHover = (event) => {
+            const rect = img.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // Convert canvas coordinates to image coordinates
+            const imageX = (x / rect.width) * img.naturalWidth;
+            const imageY = (y / rect.height) * img.naturalHeight;
+            
+            // Find which patch this corresponds to
+            let hoveredPatch = null;
+            for (const patch of patches) {
+                const [x1, y1, x2, y2] = patch.bbox;
+                if (imageX >= x1 && imageX <= x2 && imageY >= y1 && imageY <= y2) {
+                    hoveredPatch = patch;
+                    break;
+                }
+            }
+            
+            if (hoveredPatch) {
+                // Calculate corresponding token index (if we have image token range data)
+                let tokenIndexInfo = '';
+                if (this.currentAttentionData && this.currentAttentionData.image_token_range) {
+                    const tokenIndex = this.currentAttentionData.image_token_range.start + hoveredPatch.patch_idx;
+                    tokenIndexInfo = `, Token Index: ${tokenIndex}`;
+                }
+                
+                // Update info text
+                document.getElementById('attentionImageInfo').textContent = 
+                    `Hovering Image Patch [Patch: ${hoveredPatch.patch_idx}${tokenIndexInfo}]: Attention ${hoveredPatch.attention.toFixed(4)}`;
+                
+                // Highlight corresponding position in heatmap (if possible)
+                // This would need Plotly hover events to be properly implemented
+                
+                // Temporarily highlight the patch
+                this.highlightImagePatch(canvas, hoveredPatch, patches);
+            } else {
+                document.getElementById('attentionImageInfo').textContent = 
+                    'Hover over image patches to see attention weights';
+                // Redraw normal overlay
+                this.drawAttentionOverlay(img, canvas, patches);
+            }
+        };
+        
+        canvas.addEventListener('mousemove', handleImageHover);
+        canvas.addEventListener('mouseleave', () => {
+            document.getElementById('attentionImageInfo').textContent = 
+                'Hover over image patches to see attention weights';
+            this.drawAttentionOverlay(img, canvas, patches);
+        });
+    }
+    
+    highlightImagePatch(canvas, hoveredPatch, allPatches) {
+        const ctx = canvas.getContext('2d');
+        const img = document.getElementById('attentionImage');
+        
+        // Redraw all patches first
+        this.drawAttentionOverlay(img, canvas, allPatches);
+        
+        // Then highlight the specific patch
+        const [x1, y1, x2, y2] = hoveredPatch.bbox;
+        const rect = img.getBoundingClientRect();
+        const scaleX = rect.width / img.naturalWidth;
+        const scaleY = rect.height / img.naturalHeight;
+        
+        const canvasX1 = x1 * scaleX;
+        const canvasY1 = y1 * scaleY;
+        const canvasX2 = x2 * scaleX;
+        const canvasY2 = y2 * scaleY;
+        
+        // Draw highlighted border
+        ctx.strokeStyle = '#ffff00'; // Yellow highlight
+        ctx.lineWidth = 4;
+        ctx.strokeRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
+    }
+    
+    highlightImagePatchByIndex(patchIndex) {
+        // Find the patch by its index and highlight it
+        if (!this.currentAttentionData || !this.currentAttentionData.patches) return;
+        
+        const targetPatch = this.currentAttentionData.patches.find(patch => patch.patch_idx === patchIndex);
+        if (targetPatch) {
+            const img = document.getElementById('attentionImage');
+            const canvas = document.getElementById('attentionOverlayCanvas');
+            if (img && canvas) {
+                this.highlightImagePatch(canvas, targetPatch, this.currentAttentionData.patches);
+            }
+        }
+    }
+    
+    addHeatmapInteractions(chartContainer, attentionData) {
+        // Add hover events to the heatmap to sync with other visualizations
+        chartContainer.addEventListener('plotly_hover', (data) => {
+            if (data.points && data.points.length > 0) {
+                const point = data.points[0];
+                const xIndex = point.pointNumber[1]; // Column index
+                
+                // Get the token at this position (now in correct sequence order)
+                if (attentionData.text_tokens && xIndex < attentionData.text_tokens.length) {
+                    const token = attentionData.text_tokens[xIndex];
+                    
+                    if (token.is_image_token) {
+                        // This is an image token
+                        document.getElementById('attentionImageInfo').textContent = 
+                            `Heatmap hover: Image Patch ${token.patch_idx} (Token ${token.position}), Attention ${token.attention.toFixed(4)}`;
+                        
+                        // Highlight the patch in the image
+                        this.highlightImagePatchByIndex(token.patch_idx);
+                    } else {
+                        // This is a text token
+                        document.getElementById('attentionImageInfo').textContent = 
+                            `Heatmap hover: Text Token "${token.text}" (Index ${token.position}), Attention ${token.attention.toFixed(4)}`;
+                        
+                        // Highlight the token in the text
+                        this.highlightTextToken(xIndex);
+                    }
+                }
+            }
+        });
+        
+        chartContainer.addEventListener('plotly_unhover', () => {
+            // Reset highlights
+            document.getElementById('attentionImageInfo').textContent = 
+                'Hover over image patches to see attention weights';
+            
+            // Redraw normal overlays
+            const img = document.getElementById('attentionImage');
+            const canvas = document.getElementById('attentionOverlayCanvas');
+            if (img && canvas && this.currentAttentionData) {
+                this.drawAttentionOverlay(img, canvas, this.currentAttentionData.patches);
+            }
+            
+            // Reset text highlighting
+            this.resetTextHighlighting();
+        });
+    }
+    
+    highlightTextToken(tokenIndex) {
+        const container = document.getElementById('attentionTextContainer');
+        if (!container) return;
+        
+        const tokens = container.querySelectorAll('.attention-token');
+        
+        // Reset all tokens
+        tokens.forEach((token, idx) => {
+            if (idx === tokenIndex) {
+                // Highlight this token
+                token.style.outline = '3px solid #ffff00';
+                token.style.outlineOffset = '2px';
+            } else {
+                token.style.outline = 'none';
+            }
+        });
+    }
+    
+    resetTextHighlighting() {
+        const container = document.getElementById('attentionTextContainer');
+        if (!container) return;
+        
+        const tokens = container.querySelectorAll('.attention-token');
+        tokens.forEach(token => {
+            token.style.outline = 'none';
+        });
+    }
+    
+    setupAttentionExplorer(resultsContent, modelInfo) {
+        const layerSelector = resultsContent.querySelector('#attentionLayerSelector');
+        const headSelector = resultsContent.querySelector('#attentionHeadSelector');
+        const analyzeBtn = resultsContent.querySelector('#analyzeAttentionBtn');
+        
+        if (!layerSelector || !headSelector || !analyzeBtn) {
+            return;
+        }
+        
+        // Populate layer selector
+        layerSelector.innerHTML = '<option value="">Select a layer...</option>';
+        for (let i = 0; i < modelInfo.num_layers; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = `Layer ${i}`;
+            layerSelector.appendChild(option);
+        }
+        
+        // Populate head selector
+        const updateHeadSelector = (numHeads) => {
+            headSelector.innerHTML = '<option value="">Select a head...</option>';
+            for (let i = 0; i < numHeads; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `Head ${i}`;
+                headSelector.appendChild(option);
+            }
+        };
+        
+        // Initialize with the model's number of heads
+        updateHeadSelector(modelInfo.num_heads);
+        
+        // Enable/disable analyze button based on selection
+        const checkSelections = () => {
+            const layerSelected = layerSelector.value !== '';
+            const headSelected = headSelector.value !== '';
+            analyzeBtn.disabled = !(layerSelected && headSelected);
+        };
+        
+        layerSelector.addEventListener('change', checkSelections);
+        headSelector.addEventListener('change', checkSelections);
+        
+        // Add event listener for analyze button (only for layer changes)
+        analyzeBtn.addEventListener('click', () => {
+            this.handleAttentionAnalysis(layerSelector.value, headSelector.value);
+        });
+        
+        // Store selectors for instant head switching setup
+        this.attentionLayerSelector = layerSelector;
+        this.attentionHeadSelector = headSelector;
+    }
+    
+    async handleAttentionAnalysis(layer, head) {
+        if (!this.modelReady || this.isPredicting || !this.uploadedImage) {
+            return;
+        }
+        
+        this.isPredicting = true;
+        const button = document.getElementById('analyzeAttentionBtn');
+        const spinner = document.getElementById('attentionSpinner');
+        const visualization = document.getElementById('attentionVisualization');
+        
+        // Update UI
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+        
+        const formData = {
+            filename: this.uploadedImage.filename,
+            task: document.getElementById('task').value,
+            assistant_prefill: document.getElementById('assistantPrefill').value,
+            layer: parseInt(layer),
+            head: parseInt(head)
+        };
+        
+        try {
+            const response = await fetch('/api/attention', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                // Update current view info
+                document.getElementById('attentionCurrentView').textContent = `Layer ${layer}, Head ${head}`;
+                document.getElementById('attentionQueryInfo').textContent = result.token_position;
+                
+                // Show visualization container
+                visualization.classList.remove('d-none');
+                
+                // Store attention data for interactions (current head)
+                this.currentAttentionData = result.attention_data;
+                
+                // Cache ALL heads data for instant switching
+                this.allHeadsAttentionData = result.attention_data.all_heads;
+                this.currentLayer = parseInt(layer);
+                this.currentImageUrl = result.image_url;
+                
+                // Update all visualizations
+                this.updateAttentionImage(result.image_url, result.attention_data);
+                this.updateAttentionText(result.attention_data.text_tokens);
+                this.updateAttentionHeatmap(result.attention_data);
+                
+                // Enable instant head switching by updating the head selector behavior
+                this.setupInstantHeadSwitching();
+                
+            } else {
+                this.showError(result.error || 'Attention analysis failed');
+            }
+        } catch (error) {
+            console.error('Error during attention analysis:', error);
+            this.showError('Failed to connect to server for attention analysis');
+        } finally {
+            // Reset UI
+            button.disabled = false;
+            spinner.classList.add('d-none');
+            this.isPredicting = false;
+        }
+    }
+    
+    updateAttentionImage(imageUrl, attentionData) {
+        const img = document.getElementById('attentionImage');
+        const canvas = document.getElementById('attentionOverlayCanvas');
+        
+        if (!img || !canvas) return;
+        
+        img.src = imageUrl;
+        img.onload = () => {
+            this.drawAttentionOverlay(img, canvas, attentionData.patches);
+            this.addImageInteractions(img, canvas, attentionData.patches);
+        };
+    }
+    
+    drawAttentionOverlay(img, canvas, patches) {
+        const rect = img.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (!patches || patches.length === 0) return;
+        
+        // Find min/max attention for normalization
+        const attentions = patches.map(p => p.attention);
+        const minAtt = Math.min(...attentions);
+        const maxAtt = Math.max(...attentions);
+        const range = maxAtt - minAtt;
+        
+        // Calculate scale factors
+        const scaleX = rect.width / img.naturalWidth;
+        const scaleY = rect.height / img.naturalHeight;
+        
+        // Draw attention rectangles for top patches
+        patches.forEach(patch => {
+            if (range > 0) {
+                // Normalize attention to 0-1 range
+                const normalizedAtt = (patch.attention - minAtt) / range;
+                
+                // Only draw if attention is significant (top 20% of patches)
+                if (normalizedAtt > 0.8) {
+                    const [x1, y1, x2, y2] = patch.bbox;
+                    
+                    // Scale coordinates to canvas size
+                    const canvasX1 = x1 * scaleX;
+                    const canvasY1 = y1 * scaleY;
+                    const canvasX2 = x2 * scaleX;
+                    const canvasY2 = y2 * scaleY;
+                    
+                    // Draw rectangle with attention-based alpha
+                    const alpha = 0.3 + (normalizedAtt * 0.4); // 0.3 to 0.7 alpha range
+                    ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                    ctx.fillRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
+                    
+                    // Draw border
+                    ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
+                }
+            }
+        });
+    }
+    
+    updateAttentionText(textTokens) {
+        const container = document.getElementById('attentionTextContainer');
+        if (!container || !textTokens) return;
+        
+        // Find min/max attention for normalization
+        const attentions = textTokens.map(t => t.attention);
+        const minAtt = Math.min(...attentions);
+        const maxAtt = Math.max(...attentions);
+        const range = maxAtt - minAtt;
+        
+        // Clear container and add token spans
+        container.innerHTML = '';
+        
+        textTokens.forEach((token, idx) => {
+            const span = document.createElement('span');
+            span.textContent = token.text;
+            span.className = 'attention-token';
+            span.style.padding = '2px 1px';
+            span.style.cursor = 'pointer';
+            span.style.borderRadius = '2px';
+            span.style.margin = '0 1px';
+            
+            // Special styling for image tokens
+            if (token.is_image_token) {
+                span.classList.add('image-token');
+                span.style.backgroundColor = 'rgba(255, 165, 0, 0.3)'; // Orange background for image tokens
+                span.style.border = '1px solid orange';
+                span.title = `Image Token | Token Index: ${token.position} | Image Patch: ${token.patch_idx} | Text: "${token.text}" | Attention: ${token.attention.toFixed(4)}`;
+            } else {
+                // Set background based on attention weight for regular text tokens
+                if (range > 0) {
+                    const normalizedAtt = (token.attention - minAtt) / range;
+                    // Apply gamma correction to make differences more visible
+                    const gamma = 0.5;
+                    const adjustedAtt = Math.pow(normalizedAtt, gamma);
+                    const alpha = 0.1 + (adjustedAtt * 0.6); // 0.1 to 0.7 alpha range
+                    span.style.backgroundColor = `rgba(0, 100, 200, ${alpha})`;
+                    span.style.color = adjustedAtt > 0.5 ? 'white' : 'black';
+                }
+                span.title = `Text Token | Token Index: ${token.position} | Text: "${token.text}" | Attention: ${token.attention.toFixed(4)}`;
+            }
+            
+            // Add hover effects
+            span.addEventListener('mouseenter', () => {
+                span.style.outline = '2px solid #0d6efd';
+                
+                if (token.is_image_token) {
+                    // For image tokens, show info and highlight corresponding image patch
+                    document.getElementById('attentionImageInfo').textContent = 
+                        `Hovering Image Token [Index: ${token.position}, Patch: ${token.patch_idx}]: "${token.text}" (attention: ${token.attention.toFixed(4)})`;
+                    
+                    // Highlight the corresponding image patch
+                    this.highlightImagePatchByIndex(token.patch_idx);
+                } else {
+                    // For regular text tokens
+                    document.getElementById('attentionImageInfo').textContent = 
+                        `Hovering Text Token [Index: ${token.position}]: "${token.text}" (attention: ${token.attention.toFixed(4)})`;
+                }
+            });
+            
+            span.addEventListener('mouseleave', () => {
+                span.style.outline = 'none';
+                document.getElementById('attentionImageInfo').textContent = 
+                    'Hover over image patches to see attention weights';
+                
+                // Reset image overlay to normal state if we were highlighting an image token
+                if (token.is_image_token) {
+                    const img = document.getElementById('attentionImage');
+                    const canvas = document.getElementById('attentionOverlayCanvas');
+                    if (img && canvas && this.currentAttentionData) {
+                        this.drawAttentionOverlay(img, canvas, this.currentAttentionData.patches);
+                    }
+                }
+            });
+            
+            container.appendChild(span);
+        });
+    }
+    
+    updateAttentionHeatmap(attentionData) {
+        const chartContainer = document.getElementById('attentionHeatmap');
+        if (!chartContainer) return;
+        
+        // Check if Plotly is available
+        if (typeof Plotly === 'undefined') {
+            console.error('Plotly is not loaded');
+            chartContainer.innerHTML = '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle me-2"></i>Chart library not loaded. Please refresh the page.</div>';
+            return;
+        }
+        
+        // Prepare data for heatmap
+        const textTokens = attentionData.text_tokens || [];
+        
+        if (textTokens.length === 0) {
+            chartContainer.innerHTML = '<div class="alert alert-warning">No attention data available</div>';
+            return;
+        }
+        
+        // Create labels and attention values in the ACTUAL token sequence order
+        const xLabels = [];
+        const attentionValues = [];
+        
+        // Process tokens in their actual sequence order (not separating patches and text)
+        textTokens.forEach((token, idx) => {
+            if (token.is_image_token) {
+                // This is an image token
+                xLabels.push(`img:${token.patch_idx}`);
+            } else {
+                // This is a text token
+                const cleanToken = token.text.replace(/\s/g, '_').replace(/\n/g, '\\n');
+                xLabels.push(`t:${token.position}:${cleanToken.slice(0, 8)}`);
+            }
+            attentionValues.push(token.attention);
+        });
+        
+        // Create 2D array for heatmap (single row for the query token)
+        const zValues = [attentionValues];
+        const yLabels = ['Last Token Query'];
+        
+        const data = [{
+            z: zValues,
+            type: 'heatmap',
+            colorscale: 'Viridis',
+            hovertemplate: 
+                '<b>Position:</b> %{x}<br>' +
+                '<b>Query:</b> %{y}<br>' +
+                '<b>Attention:</b> %{z:.4f}<extra></extra>',
+            showscale: true,
+            colorbar: {
+                title: 'Attention Weight'
+            }
+        }];
+        
+        const layout = {
+            title: {
+                text: 'Attention Heatmap: Last Token Query',
+                x: 0.5,
+                font: { size: 14 }
+            },
+            xaxis: {
+                title: 'Key Positions (Image Patches + Text Tokens)',
+                tickangle: -45,
+                tickfont: { size: 9 },
+                showgrid: false
+            },
+            yaxis: {
+                title: 'Query Token',
+                showgrid: false
+            },
+            margin: {
+                l: 80,
+                r: 60,
+                t: 60,
+                b: 120
+            },
+            plot_bgcolor: '#ffffff',
+            paper_bgcolor: '#ffffff'
+        };
+        
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d', 'autoScale2d'],
+            displaylogo: false
+        };
+        
+        Plotly.newPlot(chartContainer, data, layout, config);
+        
+        // Add hover interactions for the heatmap
+        this.addHeatmapInteractions(chartContainer, attentionData);
+    }
+    
+    setupInstantHeadSwitching() {
+        // Remove any existing head change listeners to avoid duplicates
+        if (this.headSwitchListener) {
+            this.attentionHeadSelector.removeEventListener('change', this.headSwitchListener);
+        }
+        
+        // Add new head change listener that uses cached data
+        this.headSwitchListener = (event) => {
+            const selectedHead = parseInt(event.target.value);
+            if (selectedHead >= 0 && this.allHeadsAttentionData) {
+                this.switchToHead(selectedHead);
+            }
+        };
+        
+        this.attentionHeadSelector.addEventListener('change', this.headSwitchListener);
+    }
+    
+    switchToHead(headIndex) {
+        // Update current view info
+        document.getElementById('attentionCurrentView').textContent = `Layer ${this.currentLayer}, Head ${headIndex}`;
+        
+        // Get data for this head from cached all heads data
+        const headPatches = this.allHeadsAttentionData.patches[headIndex];
+        const headTextTokens = this.allHeadsAttentionData.text_tokens[headIndex];
+        
+        // Create attention data structure for this head
+        const headAttentionData = {
+            patches: headPatches,
+            text_tokens: headTextTokens,
+            full_attention: this.allHeadsAttentionData.full_attention[headIndex],
+            num_image_patches: this.currentAttentionData.num_image_patches,
+            image_token_range: this.currentAttentionData.image_token_range,
+            image_dimensions: this.currentAttentionData.image_dimensions
+        };
+        
+        // Update current attention data
+        this.currentAttentionData = headAttentionData;
+        
+        // Update all visualizations with the new head data
+        this.updateAttentionImage(this.currentImageUrl, headAttentionData);
+        this.updateAttentionText(headTextTokens);
+        this.updateAttentionHeatmap(headAttentionData);
     }
 }
 

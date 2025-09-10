@@ -150,6 +150,50 @@ def direct_logit_attribution_analysis():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/attention', methods=['POST'])
+def attention_analysis():
+    """Run attention analysis for a specific layer and head"""
+    if not model_manager.is_ready:
+        return jsonify({'error': 'Model not ready yet'}), 503
+    
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        task = data.get('task', 'Click on the relevant element.')
+        assistant_prefill = data.get('assistant_prefill', '')
+        layer = data.get('layer', 0)
+        head = data.get('head', 0)
+        
+        if not filename:
+            return jsonify({'error': 'No filename provided'}), 400
+        
+        # Validate layer and head parameters
+        try:
+            layer = int(layer)
+            head = int(head)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Layer and head must be integers'}), 400
+        
+        if layer < 0 or head < 0:
+            return jsonify({'error': 'Layer and head must be non-negative'}), 400
+        
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+        
+        result = model_manager.attention_analysis(
+            image_path=image_path,
+            task=task,
+            layer=layer,
+            head=head,
+            assistant_prefill=assistant_prefill
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/static/uploads/<filename>')
 def serve_uploaded_image(filename):
