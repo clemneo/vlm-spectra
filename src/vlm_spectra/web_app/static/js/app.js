@@ -1346,8 +1346,14 @@ class DemoApp {
         
         if (!patches || patches.length === 0) return;
         
-        // Find min/max attention for normalization
+        // Calculate attention statistics for 2 standard deviation threshold
         const attentions = patches.map(p => p.attention);
+        const meanAtt = attentions.reduce((sum, att) => sum + att, 0) / attentions.length;
+        const variance = attentions.reduce((sum, att) => sum + Math.pow(att - meanAtt, 2), 0) / attentions.length;
+        const stdDev = Math.sqrt(variance);
+        const threshold = meanAtt + (2 * stdDev);
+        
+        // Find min/max for alpha calculation
         const minAtt = Math.min(...attentions);
         const maxAtt = Math.max(...attentions);
         const range = maxAtt - minAtt;
@@ -1356,32 +1362,28 @@ class DemoApp {
         const scaleX = rect.width / img.naturalWidth;
         const scaleY = rect.height / img.naturalHeight;
         
-        // Draw attention rectangles for top patches
+        // Draw attention rectangles for patches more than 2 standard deviations above mean
         patches.forEach(patch => {
-            if (range > 0) {
-                // Normalize attention to 0-1 range
+            if (range > 0 && patch.attention > threshold) {
+                // Normalize attention to 0-1 range for alpha calculation
                 const normalizedAtt = (patch.attention - minAtt) / range;
+                const [x1, y1, x2, y2] = patch.bbox;
                 
-                // Only draw if attention is significant (top 20% of patches)
-                if (normalizedAtt > 0.8) {
-                    const [x1, y1, x2, y2] = patch.bbox;
-                    
-                    // Scale coordinates to canvas size
-                    const canvasX1 = x1 * scaleX;
-                    const canvasY1 = y1 * scaleY;
-                    const canvasX2 = x2 * scaleX;
-                    const canvasY2 = y2 * scaleY;
-                    
-                    // Draw rectangle with attention-based alpha
-                    const alpha = 0.3 + (normalizedAtt * 0.4); // 0.3 to 0.7 alpha range
-                    ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
-                    ctx.fillRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
-                    
-                    // Draw border
-                    ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
-                }
+                // Scale coordinates to canvas size
+                const canvasX1 = x1 * scaleX;
+                const canvasY1 = y1 * scaleY;
+                const canvasX2 = x2 * scaleX;
+                const canvasY2 = y2 * scaleY;
+                
+                // Draw rectangle with attention-based alpha
+                const alpha = 0.3 + (normalizedAtt * 0.4); // 0.3 to 0.7 alpha range
+                ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                ctx.fillRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
+                
+                // Draw border
+                ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
             }
         });
     }
