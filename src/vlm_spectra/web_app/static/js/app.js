@@ -767,12 +767,13 @@ class DemoApp {
     
     setupDlaAnalysis(resultsContent, topTokens) {
         const dlaTokenSelector = resultsContent.querySelector('#dlaTokenSelector');
+        const dlaComponentSelector = resultsContent.querySelector('#dlaComponentSelector');
         const dlaBtn = resultsContent.querySelector('#analyzeDlaBtn');
-        
+
         if (!dlaTokenSelector || !topTokens || !dlaBtn) {
             return;
         }
-        
+
         // Populate DLA token selector dropdown
         dlaTokenSelector.innerHTML = '';
         topTokens.forEach((token, index) => {
@@ -783,10 +784,34 @@ class DemoApp {
             option.textContent = `${displayToken} (${(token.probability * 100).toFixed(2)}%)`;
             dlaTokenSelector.appendChild(option);
         });
-        
+
         // Store data for DLA analysis
         dlaTokenSelector.dataset.topTokens = JSON.stringify(topTokens);
-        
+
+        // Setup enhanced dropdown controls for token selector
+        this.setupEnhancedDropdown({
+            selector: dlaTokenSelector,
+            decrementBtn: resultsContent.querySelector('#dlaTokenDecrement'),
+            incrementBtn: resultsContent.querySelector('#dlaTokenIncrement'),
+            minValue: 0,
+            maxValue: topTokens.length - 1,
+            onChange: (value) => {
+                this.handleDlaAnalysis();
+            }
+        });
+
+        // Setup enhanced dropdown controls for component selector
+        this.setupEnhancedDropdown({
+            selector: dlaComponentSelector,
+            decrementBtn: resultsContent.querySelector('#dlaComponentDecrement'),
+            incrementBtn: resultsContent.querySelector('#dlaComponentIncrement'),
+            minValue: 0,
+            maxValue: dlaComponentSelector.options.length - 1,
+            onChange: (value) => {
+                this.handleDlaAnalysis();
+            }
+        });
+
         // Add event listener to DLA button in this specific instance
         dlaBtn.addEventListener('click', () => {
             this.handleDlaAnalysis();
@@ -1191,22 +1216,117 @@ class DemoApp {
     resetTextHighlighting() {
         const container = document.getElementById('attentionTextContainer');
         if (!container) return;
-        
+
         const tokens = container.querySelectorAll('.attention-token');
         tokens.forEach(token => {
             token.style.outline = 'none';
         });
+    }
+
+    setupEnhancedDropdown(config) {
+        const { selector, decrementBtn, incrementBtn, minValue, maxValue, onChange } = config;
+
+        if (!selector || !decrementBtn || !incrementBtn) {
+            console.log('setupEnhancedDropdown: Missing required elements', { selector, decrementBtn, incrementBtn });
+            return;
+        }
+
+        console.log('Setting up enhanced dropdown', selector.id);
+
+        // Update button states based on current selection
+        const updateButtonStates = () => {
+            const currentValue = parseInt(selector.value);
+            const hasSelection = selector.value !== '' && !isNaN(currentValue);
+
+            decrementBtn.disabled = !hasSelection || currentValue <= minValue;
+            incrementBtn.disabled = !hasSelection || currentValue >= maxValue;
+        };
+
+        // Handle decrement button click
+        decrementBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            console.log('Decrement clicked for', selector.id);
+
+            let currentValue = parseInt(selector.value);
+
+            // If no current selection, start from the last valid option
+            if (isNaN(currentValue) || selector.value === '') {
+                currentValue = maxValue + 1; // Will be decremented to maxValue
+            }
+
+            if (currentValue > minValue) {
+                const newValue = currentValue - 1;
+                selector.value = newValue;
+
+                // Trigger change event manually
+                const changeEvent = new Event('change', { bubbles: true });
+                selector.dispatchEvent(changeEvent);
+
+                if (onChange) {
+                    onChange(newValue);
+                }
+            }
+            updateButtonStates();
+        });
+
+        // Handle increment button click
+        incrementBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            console.log('Increment clicked for', selector.id);
+
+            let currentValue = parseInt(selector.value);
+
+            // If no current selection, start from before the first valid option
+            if (isNaN(currentValue) || selector.value === '') {
+                currentValue = minValue - 1; // Will be incremented to minValue
+            }
+
+            if (currentValue < maxValue) {
+                const newValue = currentValue + 1;
+                selector.value = newValue;
+
+                // Trigger change event manually
+                const changeEvent = new Event('change', { bubbles: true });
+                selector.dispatchEvent(changeEvent);
+
+                if (onChange) {
+                    onChange(newValue);
+                }
+            }
+            updateButtonStates();
+        });
+
+        // Handle dropdown change to update button states
+        selector.addEventListener('change', updateButtonStates);
+
+        // Handle keyboard navigation
+        selector.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                decrementBtn.click();
+            } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                incrementBtn.click();
+            }
+        });
+
+        // Enable buttons initially if we have valid range
+        decrementBtn.disabled = false;
+        incrementBtn.disabled = false;
+
+        // Initial state update
+        updateButtonStates();
     }
     
     setupAttentionExplorer(resultsContent, modelInfo) {
         const layerSelector = resultsContent.querySelector('#attentionLayerSelector');
         const headSelector = resultsContent.querySelector('#attentionHeadSelector');
         const analyzeBtn = resultsContent.querySelector('#analyzeAttentionBtn');
-        
+
         if (!layerSelector || !headSelector || !analyzeBtn) {
             return;
         }
-        
+
         // Populate layer selector
         layerSelector.innerHTML = '<option value="">Select a layer...</option>';
         for (let i = 0; i < modelInfo.num_layers; i++) {
@@ -1215,7 +1335,7 @@ class DemoApp {
             option.textContent = `Layer ${i}`;
             layerSelector.appendChild(option);
         }
-        
+
         // Populate head selector
         const updateHeadSelector = (numHeads) => {
             headSelector.innerHTML = '<option value="">Select a head...</option>';
@@ -1226,25 +1346,54 @@ class DemoApp {
                 headSelector.appendChild(option);
             }
         };
-        
+
         // Initialize with the model's number of heads
         updateHeadSelector(modelInfo.num_heads);
-        
+
+        // Setup enhanced dropdown controls for layer selector
+        this.setupEnhancedDropdown({
+            selector: layerSelector,
+            decrementBtn: resultsContent.querySelector('#attentionLayerDecrement'),
+            incrementBtn: resultsContent.querySelector('#attentionLayerIncrement'),
+            minValue: 0,
+            maxValue: modelInfo.num_layers - 1,
+            onChange: (value) => {
+                this.handleAttentionAnalysis(value, headSelector.value);
+            }
+        });
+
+        // Setup enhanced dropdown controls for head selector
+        this.setupEnhancedDropdown({
+            selector: headSelector,
+            decrementBtn: resultsContent.querySelector('#attentionHeadDecrement'),
+            incrementBtn: resultsContent.querySelector('#attentionHeadIncrement'),
+            minValue: 0,
+            maxValue: modelInfo.num_heads - 1,
+            onChange: (value) => {
+                // Use instant head switching if we have cached data
+                if (this.allHeadsAttentionData && this.currentLayer !== undefined) {
+                    this.switchToHead(parseInt(value));
+                } else {
+                    this.handleAttentionAnalysis(layerSelector.value, value);
+                }
+            }
+        });
+
         // Enable/disable analyze button based on selection
         const checkSelections = () => {
             const layerSelected = layerSelector.value !== '';
             const headSelected = headSelector.value !== '';
             analyzeBtn.disabled = !(layerSelected && headSelected);
         };
-        
+
         layerSelector.addEventListener('change', checkSelections);
         headSelector.addEventListener('change', checkSelections);
-        
+
         // Add event listener for analyze button (only for layer changes)
         analyzeBtn.addEventListener('click', () => {
             this.handleAttentionAnalysis(layerSelector.value, headSelector.value);
         });
-        
+
         // Store selectors for instant head switching setup
         this.attentionLayerSelector = layerSelector;
         this.attentionHeadSelector = headSelector;

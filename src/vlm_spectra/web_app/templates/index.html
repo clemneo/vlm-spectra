@@ -271,15 +271,31 @@
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <label for="attentionLayerSelector" class="form-label">Select Layer:</label>
-                            <select class="form-select" id="attentionLayerSelector">
-                                <option value="">Select a layer...</option>
-                            </select>
+                            <div class="input-group">
+                                <select class="form-select" id="attentionLayerSelector">
+                                    <option value="">Select a layer...</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionLayerDecrement">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionLayerIncrement">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="col-md-6">
                             <label for="attentionHeadSelector" class="form-label">Select Head:</label>
-                            <select class="form-select" id="attentionHeadSelector">
-                                <option value="">Select a head...</option>
-                            </select>
+                            <div class="input-group">
+                                <select class="form-select" id="attentionHeadSelector">
+                                    <option value="">Select a head...</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionHeadDecrement">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionHeadIncrement">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -374,16 +390,32 @@
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <label for="dlaTokenSelector" class="form-label">Select Token:</label>
-                            <select class="form-select" id="dlaTokenSelector">
-                                <option value="0">Loading...</option>
-                            </select>
+                            <div class="input-group">
+                                <select class="form-select" id="dlaTokenSelector">
+                                    <option value="0">Loading...</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="dlaTokenDecrement">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="dlaTokenIncrement">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="col-md-6">
                             <label for="dlaComponentSelector" class="form-label">Component View:</label>
-                            <select class="form-select" id="dlaComponentSelector">
-                                <option value="att_mlp">Attention + MLP</option>
-                                <option value="heads_only">Attention Heads Only</option>
-                            </select>
+                            <div class="input-group">
+                                <select class="form-select" id="dlaComponentSelector">
+                                    <option value="att_mlp">Attention + MLP</option>
+                                    <option value="heads_only">Attention Heads Only</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="dlaComponentDecrement">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="dlaComponentIncrement">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div class="mb-3">
