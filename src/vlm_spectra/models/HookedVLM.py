@@ -2,6 +2,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import torch
 from PIL import Image, ImageDraw, ImageFont
 from contextlib import nullcontext, contextmanager
+from typing import Dict, Any, Tuple, Union
 
 from vlm_spectra.models.model_prompts import UI_TARS_PROMPT
 from vlm_spectra.utils.qwen_25_vl_utils import (
@@ -23,6 +24,18 @@ SUPPORTED_MODELS = [
 
 
 class HookedVLM:
+    """
+    A wrapper around Vision-Language Models (VLMs) that provides interpretability hooks.
+
+    This class wraps Hugging Face VLMs with interpretability functionality, allowing
+    for hidden state extraction, attention pattern analysis, and logit lens visualization.
+    Currently supports ByteDance-Seed/UI-TARS-1.5-7B (Qwen2.5-VL based).
+
+    Args:
+        model_name: Name of the model to load. Must be in SUPPORTED_MODELS.
+        device: Device to load model on. "auto" uses the model's default device placement.
+    """
+
     def __init__(
         self, model_name: str = "ByteDance-Seed/UI-TARS-1.5-7B", device: str = "auto"
     ):
@@ -48,16 +61,26 @@ class HookedVLM:
 
     def generate(
         self,
-        inputs,
+        inputs: Dict[str, torch.Tensor],
         max_new_tokens: int = 512,
         require_grads: bool = False,
         do_sample: bool = False,
         return_dict_in_generate: bool = True,
         **kwargs,
-    ):
-        """Prepare inputs with:
+    ) -> Any:
+        """
+        Generate text from the model given prepared inputs.
 
-        `inputs = self._prepare_messages(task, image)`
+        Args:
+            inputs: Prepared model inputs from prepare_messages()
+            max_new_tokens: Maximum number of new tokens to generate
+            require_grads: Whether to enable gradients during generation
+            do_sample: Whether to use sampling for generation
+            return_dict_in_generate: Whether to return detailed generation info
+            **kwargs: Additional arguments passed to model.generate()
+
+        Returns:
+            Generation outputs from the model
         """
 
         # inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
@@ -77,8 +100,20 @@ class HookedVLM:
         return outputs
 
     def forward(
-        self, inputs, require_grads: bool = False, return_dict: bool = True, **kwargs
-    ):
+        self, inputs: Dict[str, torch.Tensor], require_grads: bool = False, return_dict: bool = True, **kwargs
+    ) -> Any:
+        """
+        Run a forward pass through the model.
+
+        Args:
+            inputs: Prepared model inputs from prepare_messages()
+            require_grads: Whether to enable gradients during forward pass
+            return_dict: Whether to return outputs as a dictionary
+            **kwargs: Additional arguments passed to model.forward()
+
+        Returns:
+            Forward pass outputs from the model
+        """
         # inputs = inputs.to("cuda" if self.device != "cpu" else "cpu")
         inputs = inputs.to(self.device)
         self.model.eval()
@@ -96,11 +131,11 @@ class HookedVLM:
     def prepare_messages(
         self,
         task: str,
-        image: Image,
+        image: Image.Image,
         append_text: str = "",
         assistant_prefill: str = "",
         return_text: bool = False,
-    ):
+    ) -> Union[Dict[str, torch.Tensor], Tuple[Dict[str, torch.Tensor], str]]:
         messages = [
             {
                 "role": "user",

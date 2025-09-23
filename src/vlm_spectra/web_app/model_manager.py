@@ -1,4 +1,3 @@
-import os
 import re
 import time
 import threading
@@ -9,6 +8,14 @@ import numpy as np
 from vlm_spectra.models.HookedVLM import HookedVLM
 
 class ModelManager:
+    """
+    Manages VLM model loading and provides analysis methods for the web application.
+
+    This class handles model initialization, caching, and provides various analysis
+    methods including prediction, forward pass analysis, attention analysis, and
+    direct logit attribution.
+    """
+
     def __init__(self):
         self.model = None
         self.is_loading = False
@@ -39,7 +46,15 @@ class ModelManager:
                 self.is_loading = False
     
     def parse_coordinates(self, text: str) -> Tuple[Optional[int], Optional[int]]:
-        """Parse coordinates from model output text"""
+        """
+        Parse coordinates from model output text containing box notation.
+
+        Args:
+            text: Model output text potentially containing box coordinates
+
+        Returns:
+            Tuple of (x, y) coordinates if found, (None, None) otherwise
+        """
         box_pattern = r"<\|box_start\|>\((\d+),\s*(\d+)\)<\|box_end\|>"
         match = re.search(box_pattern, text)
         if match:
@@ -52,7 +67,17 @@ class ModelManager:
         task: str,
         assistant_prefill: str = ""
     ) -> Dict[str, Any]:
-        """Run model prediction on uploaded image"""
+        """
+        Run model prediction on uploaded image.
+
+        Args:
+            image_path: Path to the image file
+            task: Task description for the model
+            assistant_prefill: Optional prefill text for the assistant response
+
+        Returns:
+            Dictionary containing prediction results, inference time, and success status
+        """
         if not self.is_ready:
             raise RuntimeError("Model not ready")
             
@@ -303,16 +328,15 @@ class ModelManager:
             
         try:
             from PIL import Image
-            import torch.nn.functional as F
-            
+
             # Load the uploaded image
             image = Image.open(image_path)
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            
+
             # Prepare model inputs and get text for token analysis
             inputs, full_text = self.model.prepare_messages(task, image, assistant_prefill=assistant_prefill, return_text=True)
-            
+
             # Ensure inputs are on correct device
             for key, value in inputs.items():
                 if torch.is_tensor(value):
@@ -321,11 +345,11 @@ class ModelManager:
                     for subkey, subvalue in value.items():
                         if torch.is_tensor(subvalue):
                             value[subkey] = subvalue.to(self.model.device)
-            
+
             # Run forward pass with attention pattern cache
             start_time = time.time()
             with self.model.run_with_cache(["lm_attn_pattern"]):
-                outputs = self.model.forward(inputs)
+                self.model.forward(inputs)
             inference_time = time.time() - start_time
             
             # Extract attention patterns for the specified layer

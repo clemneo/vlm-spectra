@@ -1,16 +1,18 @@
 from PIL import Image
-from typing import Dict
+from typing import Dict, Any
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
 
 class VLMMetadataExtractor:
     """Extract metadata needed for logit lens visualization from various VLMs"""
     
     @staticmethod
     def extract_metadata_qwen(
-        model,
-        processor,
-        inputs: Dict,
+        model: Qwen2_5VLForConditionalGeneration,
+        processor: AutoProcessor,
+        inputs: Dict[str, Any],
         original_image: Image.Image
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """Extract metadata from Qwen model inputs/outputs"""
         from vlm_spectra.utils.qwen_25_vl_utils import smart_resize, IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS
         
@@ -67,13 +69,13 @@ class VLMMetadataExtractor:
     
     @staticmethod
     def extract_metadata_llava(
-        model,
-        processor,
-        inputs: Dict,
+        model: Any,
+        processor: Any,
+        inputs: Dict[str, Any],
         original_image: Image.Image,
         image_size: int = 336,
         patch_size: int = 14
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """Extract metadata from LLaVA model inputs/outputs"""
         # For LLaVA, images are resized to fixed size
         resized_size = (image_size, image_size)

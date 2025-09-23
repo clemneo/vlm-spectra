@@ -1,8 +1,7 @@
 import os
-import json
 import time
 import threading
-from flask import Flask, render_template, request, jsonify, url_for, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from vlm_spectra.web_app.model_manager import ModelManager
 

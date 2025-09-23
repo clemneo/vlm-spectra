@@ -236,7 +236,7 @@ def test_final_layer_resid_post_vs_normalized_hidden_state(model):
     diff = torch.abs(manually_normalized_same_device - final_normalized_hidden).mean()
     max_diff = torch.abs(manually_normalized_same_device - final_normalized_hidden).max()
     
-    print(f"Final layer before normalization vs after normalization:")
+    print("Final layer before normalization vs after normalization:")
     print(f"  Raw resid_post vs normalized hidden state: mean_abs_diff={torch.abs(final_resid_post.to(final_normalized_hidden.device) - final_normalized_hidden).mean():.6f}")
     print(f"  Manually normalized vs HF normalized: mean_abs_diff={diff:.6f}, max_abs_diff={max_diff:.6f}")
     
@@ -244,4 +244,4 @@ def test_final_layer_resid_post_vs_normalized_hidden_state(model):
     tolerance = 1e-4  # Tighter tolerance since we're applying the same normalization
     assert diff < tolerance, f"Manually normalized resid_post differs from HF normalized: mean_abs_diff={diff:.6f} > tolerance={tolerance}"
     
-    print(f"✓ Final layer lm_resid_post + manual RMSNorm matches output_hidden_states final hidden state")
+    print("✓ Final layer lm_resid_post + manual RMSNorm matches output_hidden_states final hidden state")
