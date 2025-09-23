@@ -8,7 +8,7 @@ MODEL_NAMES = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
 ]
 
-@pytest.fixture(scope="session", params=MODEL_NAMES)
+@pytest.fixture(scope="module", params=MODEL_NAMES)
 def model(request):
     return HookedVLM(request.param)
 

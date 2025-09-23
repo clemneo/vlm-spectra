@@ -12,7 +12,7 @@ MODEL_NAMES = [
 
 SAVE_FILES = True
 
-@pytest.fixture(scope="session", params=MODEL_NAMES)
+@pytest.fixture(scope="module", params=MODEL_NAMES)
 def model(request):
     return HookedVLM(request.param)
 
