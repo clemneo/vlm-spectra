@@ -5,9 +5,12 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from vlm_spectra.web_app.model_manager import ModelManager
 
-app = Flask(__name__)
+# Get the directory where this script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(__name__, static_folder=os.path.join(script_dir, 'static'), template_folder=os.path.join(script_dir, 'templates'))
 app.config['SECRET_KEY'] = 'demo-secret-key'
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
+app.config['UPLOAD_FOLDER'] = os.path.join(script_dir, 'static', 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
 
@@ -209,4 +212,4 @@ if __name__ == '__main__':
     model_thread.start()
     
     print("Demo will be available at http://localhost:55556")
-    app.run(host='0.0.0.0', port=55556, debug=True)
+    app.run(host='0.0.0.0', port=55556, debug=False)

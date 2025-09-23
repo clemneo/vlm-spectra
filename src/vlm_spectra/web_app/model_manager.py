@@ -1,3 +1,4 @@
+import os
 import re
 import time
 import threading
@@ -116,10 +117,13 @@ class ModelManager:
             
             # Clean up output text for display
             clean_output = output_text.split("assistant\n")[-1] if "assistant\n" in output_text else output_text
-            
+
+            # Extract filename from path and create proper URL
+            filename = os.path.basename(image_path)
+
             return {
                 'success': True,
-                'image_url': f'/{image_path}',
+                'image_url': f'/static/uploads/{filename}',
                 'task': task,
                 'prefill': assistant_prefill,
                 'prediction': {
@@ -214,10 +218,13 @@ class ModelManager:
             
             # Compute DLA for all top 10 tokens
             dla_results = self._compute_dla_for_tokens(attention_heads, mlp_outputs, [token['token_id'] for token in top_tokens])
-            
+
+            # Extract filename from path and create proper URL
+            filename = os.path.basename(image_path)
+
             return {
                 'success': True,
-                'image_url': f'/{image_path}',
+                'image_url': f'/static/uploads/{filename}',
                 'task': task,
                 'prefill': assistant_prefill,
                 'top_tokens': top_tokens,
@@ -563,11 +570,14 @@ class ModelManager:
                 
                 all_text_tokens[head_idx] = head_text_tokens
             
+            # Extract filename from path and create proper URL
+            filename = os.path.basename(image_path)
+
             return {
                 'success': True,
                 'layer': layer,
                 'head': head,
-                'image_url': f'/{image_path}',
+                'image_url': f'/static/uploads/{filename}',
                 'task': task,
                 'prefill': assistant_prefill,
                 'attention_data': {
@@ -701,10 +711,13 @@ class ModelManager:
                         layer_token_probs.append(layer_probs[token_id].item())
                     
                     layer_probabilities.append(layer_token_probs)
-            
+
+            # Extract filename from path and create proper URL
+            filename = os.path.basename(image_path)
+
             return {
                 'success': True,
-                'image_url': f'/{image_path}',
+                'image_url': f'/static/uploads/{filename}',
                 'task': task,
                 'prefill': assistant_prefill,
                 'top_tokens': top_tokens,
