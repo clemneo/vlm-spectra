@@ -411,7 +411,12 @@ class ModelManager:
             
             # Calculate resized dimensions using the model's logic
             width, height = image.size
-            from vlm_spectra.utils.qwen_25_vl_utils import smart_resize, IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS
+            from vlm_spectra.preprocessing.utils.vision_info import (
+                smart_resize,
+                IMAGE_FACTOR,
+                MIN_PIXELS,
+                MAX_PIXELS,
+            )
             resized_height, resized_width = smart_resize(
                 height, width,
                 factor=IMAGE_FACTOR,

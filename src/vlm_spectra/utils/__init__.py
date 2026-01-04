@@ -1,5 +1,5 @@
 """Utility functions for VLM Spectra."""
 
-from .qwen_25_vl_utils import process_vision_info
+from vlm_spectra.preprocessing.utils.vision_info import process_vision_info
 
 __all__ = ["process_vision_info"]
