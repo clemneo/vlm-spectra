@@ -6,13 +6,22 @@ import torch
 import torch.nn as nn
 from einops import einsum, rearrange
 from torch.nn.modules import ModuleList
-from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from transformers import AutoProcessor
+
+try:
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+        Qwen3VLForConditionalGeneration,
+    )
+except ImportError as exc:  # pragma: no cover - surfaced during import time
+    raise ImportError(
+        "Qwen3-VL requires a newer transformers release with qwen3_vl support."
+    ) from exc
 
 from vlm_spectra.models.base_adapter import ModelAdapter
 from vlm_spectra.models.registry import ModelRegistry
 
 try:
-    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import (
         apply_multimodal_rotary_pos_emb,
         repeat_kv,
         rotate_half,
@@ -52,15 +61,13 @@ except ImportError:
         return q_embed, k_embed
 
 
-@ModelRegistry.register("qwen25-vl")
-class Qwen25VLAdapter(ModelAdapter):
+@ModelRegistry.register("qwen3-vl")
+class Qwen3VLAdapter(ModelAdapter):
     SUPPORTED_MODELS = [
-        "ByteDance-Seed/UI-TARS-1.5-7B",
-        "Qwen/Qwen2.5-VL-7B",
-        "Qwen/Qwen2.5-VL-7B-Instruct",
+        "Qwen/Qwen3-VL-8B-Instruct",
     ]
 
-    MODEL_CLASS = Qwen2_5_VLForConditionalGeneration
+    MODEL_CLASS = Qwen3VLForConditionalGeneration
     PROCESSOR_CLASS = AutoProcessor
 
     def __init__(self, model: nn.Module) -> None:
@@ -177,62 +184,16 @@ class Qwen25VLAdapter(ModelAdapter):
         position_ids=None,
         position_embeddings=None,
     ) -> torch.Tensor:
-        """Compute attention patterns using Qwen2.5-VL attention logic."""
+        """Compute attention patterns using Qwen3-VL attention logic."""
         _ = position_ids
+        if position_embeddings is None:
+            raise ValueError("position_embeddings are required for Qwen3-VL attention.")
         attn_layer = self.lm_attn[layer]
-
-        bsz, q_len, _ = hidden_states.size()
-
-        query_states = attn_layer.q_proj(hidden_states)
-        key_states = attn_layer.k_proj(hidden_states)
-
-        query_states = query_states.view(bsz, q_len, -1, attn_layer.head_dim).transpose(
-            1, 2
+        _, attn_weights = attn_layer(
+            hidden_states=hidden_states,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
         )
-        key_states = key_states.view(bsz, q_len, -1, attn_layer.head_dim).transpose(1, 2)
-
-        if position_embeddings is not None:
-            cos, sin = position_embeddings
-            query_states, key_states = apply_multimodal_rotary_pos_emb(
-                query_states,
-                key_states,
-                cos,
-                sin,
-                attn_layer.rope_scaling["mrope_section"],
-            )
-
-        key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
-
-        attn_weights = torch.matmul(
-            query_states, key_states.transpose(2, 3)
-        ) / math.sqrt(attn_layer.head_dim)
-
-        if attention_mask is not None:
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-        else:
-            seq_len = attn_weights.size(-1)
-            causal_mask = torch.triu(
-                torch.full(
-                    (seq_len, seq_len),
-                    float("-inf"),
-                    device=attn_weights.device,
-                    dtype=attn_weights.dtype,
-                ),
-                diagonal=1,
-            )
-            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
-            attn_weights = attn_weights + causal_mask
-
-        if query_states.dtype == torch.float16:
-            attn_weights = torch.where(
-                torch.isinf(attn_weights), torch.zeros_like(attn_weights), attn_weights
-            )
-
-        attn_weights = torch.nn.functional.softmax(
-            attn_weights, dim=-1, dtype=torch.float32
-        ).to(query_states.dtype)
-
         return attn_weights
 
     def format_cache_item(self, hook_name: str, cache_item):

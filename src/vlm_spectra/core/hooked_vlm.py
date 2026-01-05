@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import torch
 from PIL import Image, ImageDraw, ImageFont
@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from vlm_spectra.core.activation_cache import ActivationCache
 from vlm_spectra.core.hook_manager import HookManager
 from vlm_spectra.models.registry import ModelRegistry
+from vlm_spectra.preprocessing.prompts import default_prompt_for_model
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
 from vlm_spectra.preprocessing.utils.vision_info import (
     IMAGE_FACTOR,
@@ -45,9 +46,11 @@ class HookedVLM:
         cls,
         model_name: str,
         device: str = "auto",
-        default_prompt: str | None = None,
+        default_prompt: str | Callable[[str], str] | None = None,
         **kwargs,
     ) -> "HookedVLM":
+        if default_prompt is None:
+            default_prompt = default_prompt_for_model(model_name)
         model, hf_processor, adapter = ModelRegistry.load(
             model_name, device=device, **kwargs
         )
@@ -238,17 +241,16 @@ class HookedVLM:
     ) -> Image.Image:
         width, height = image.size
 
-        resized_height, resized_width = smart_resize(
-            height,
-            width,
-            factor=IMAGE_FACTOR,
-            min_pixels=MIN_PIXELS,
-            max_pixels=MAX_PIXELS,
-        )
-
         vision_config = self.model.config.vision_config
         patch_size = vision_config.patch_size
         spatial_merge_size = vision_config.spatial_merge_size
+        resized_height, resized_width = smart_resize(
+            height,
+            width,
+            factor=patch_size * spatial_merge_size,
+            min_pixels=MIN_PIXELS,
+            max_pixels=MAX_PIXELS,
+        )
 
         grid_h = resized_height // patch_size
         grid_w = resized_width // patch_size

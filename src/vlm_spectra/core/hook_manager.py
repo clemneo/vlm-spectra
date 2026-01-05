@@ -105,12 +105,29 @@ class HookManager:
                 hook_data = {}
                 if len(args) > 0:
                     hook_data["hidden_states"] = args[0]
+                if len(args) > 1:
+                    if isinstance(args[1], tuple):
+                        hook_data["position_embeddings"] = args[1]
+                    else:
+                        hook_data["attention_mask"] = args[1]
+                if (
+                    len(args) > 2
+                    and "position_ids" not in hook_data
+                    and "position_embeddings" not in hook_data
+                ):
+                    hook_data["position_ids"] = args[2]
+                if len(args) > 2 and hook_data.get("attention_mask") is None:
+                    hook_data["attention_mask"] = args[2]
                 elif "hidden_states" in kwargs:
                     hook_data["hidden_states"] = kwargs["hidden_states"]
 
-                hook_data["attention_mask"] = kwargs.get("attention_mask")
+                hook_data["attention_mask"] = kwargs.get(
+                    "attention_mask", hook_data.get("attention_mask")
+                )
                 hook_data["position_ids"] = kwargs.get("position_ids")
-                hook_data["position_embeddings"] = kwargs.get("position_embeddings")
+                hook_data["position_embeddings"] = kwargs.get(
+                    "position_embeddings", hook_data.get("position_embeddings")
+                )
                 self._input_cache[(hook_name, layer)] = hook_data
             else:
                 if len(args) > 0:

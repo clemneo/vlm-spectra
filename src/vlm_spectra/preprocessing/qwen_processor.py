@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import torch
 from PIL import Image
@@ -9,40 +9,14 @@ from vlm_spectra.preprocessing.base_processor import BaseProcessor
 from vlm_spectra.preprocessing.utils.vision_info import process_vision_info
 
 
-UI_TARS_PROMPT = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
-
-## Output Format
-```
-Thought: ...
-Action: ...
-```
-
-## Action Space
-
-click(start_box='<|box_start|>(x1,y1)<|box_end|>')
-left_double(start_box='<|box_start|>(x1,y1)<|box_end|>')
-right_single(start_box='<|box_start|>(x1,y1)<|box_end|>')
-drag(start_box='<|box_start|>(x1,y1)<|box_end|>', end_box='<|box_start|>(x3,y3)<|box_end|>')
-hotkey(key='')
-type(content='xxx') # Use escape characters \\\\', \\\\\", and \\\\n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \\\\n at the end of content. 
-scroll(start_box='<|box_start|>(x1,y1)<|box_end|>', direction='down or up or right or left')
-wait() #Sleep for 5s and take a screenshot to check for any changes.
-finished(content='xxx') # Use escape characters \\\\', \\\", and \\\\n in content part to ensure we can parse the content in normal python string format.
-
-
-## Note
-- Use {language} in `Thought` part.
-- Write a small plan and finally summarize your next action (with its target element) in one sentence in `Thought` part.
-
-## User Instruction
-{instruction}
-"""
-
-
 class QwenProcessor(BaseProcessor):
     """Qwen2.5-VL preprocessing wrapper."""
 
-    def __init__(self, hf_processor, default_prompt: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        hf_processor,
+        default_prompt: Optional[Union[str, Callable[[str], str]]] = None,
+    ) -> None:
         self.processor = hf_processor
         self.default_prompt = default_prompt
 
@@ -96,10 +70,16 @@ class QwenProcessor(BaseProcessor):
             return inputs, rendered_text
         return inputs
 
-    def _render_prompt(self, text: str, prompt_template: Optional[str]) -> str:
+    def _render_prompt(
+        self,
+        text: str,
+        prompt_template: Optional[Union[str, Callable[[str], str]]],
+    ) -> str:
         template = prompt_template or self.default_prompt
         if not template:
             return text
+        if callable(template):
+            return template(text)
         try:
             return template.format(language="English", instruction=text, text=text)
         except KeyError:

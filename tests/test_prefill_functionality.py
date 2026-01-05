@@ -1,16 +1,17 @@
 import torch
-from vlm_spectra.models.HookedVLM import HookedVLM
+from vlm_spectra import HookedVLM
 import pytest
 from PIL import Image
 import numpy as np
 
 MODEL_NAMES = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
+    "Qwen/Qwen3-VL-8B-Instruct",
 ]
 
 @pytest.fixture(scope="module", params=MODEL_NAMES)
 def model(request):
-    return HookedVLM(request.param)
+    return HookedVLM.from_pretrained(request.param)
 
 def generate_random_image(width=224, height=224, num_channels=3):
     random_array = np.random.randint(

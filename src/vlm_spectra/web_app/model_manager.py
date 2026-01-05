@@ -6,7 +6,7 @@ from typing import Dict, Tuple, Any, Optional
 import torch
 import numpy as np
 
-from vlm_spectra.models.HookedVLM import HookedVLM
+from vlm_spectra import HookedVLM
 
 class ModelManager:
     """
@@ -35,7 +35,9 @@ class ModelManager:
             
             try:
                 print("Loading HookedVLM model...")
-                self.model = HookedVLM(model_name="ByteDance-Seed/UI-TARS-1.5-7B", device="auto")
+                self.model = HookedVLM.from_pretrained(
+                    model_name="ByteDance-Seed/UI-TARS-1.5-7B", device="auto"
+                )
                 
                 self.is_ready = True
                 print("Model loaded successfully!")

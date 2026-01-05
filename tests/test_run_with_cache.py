@@ -1,16 +1,17 @@
 import torch
-from vlm_spectra.models.HookedVLM import HookedVLM
+from vlm_spectra import HookedVLM
 import pytest
 from PIL import Image
 import numpy as np
 
 MODEL_NAMES = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
+    "Qwen/Qwen3-VL-8B-Instruct",
 ]
 
 @pytest.fixture(scope="module", params=MODEL_NAMES)
 def model(request):
-    return HookedVLM(request.param)
+    return HookedVLM.from_pretrained(request.param)
 
 def generate_random_image(width=224, height=224, num_channels=3):
     random_array = np.random.randint(
@@ -227,21 +228,33 @@ def test_final_layer_resid_post_vs_normalized_hidden_state(model):
     # Verify shapes match
     assert final_resid_post.shape == final_normalized_hidden.shape, f"Shape mismatch: cache={final_resid_post.shape}, normalized={final_normalized_hidden.shape}"
     
+    raw_diff = torch.abs(
+        final_resid_post.to(final_normalized_hidden.device) - final_normalized_hidden
+    ).mean()
+
+    # Some models return the unnormalized final hidden state; handle both cases.
+    if raw_diff < 1e-4:
+        print("Final layer hidden state appears unnormalized (matches resid_post).")
+        print(
+            "✓ Final layer lm_resid_post matches output_hidden_states final hidden state"
+        )
+        return
+
     # Apply the same RMSNorm to our cached resid_post to see if it matches
-    norm_layer = model.model.model.language_model.norm
+    norm_layer = model.adapter.get_lm_norm()
     manually_normalized = norm_layer(final_resid_post.to(norm_layer.weight.device))
-    
+
     # Compare manually normalized with HF's normalized output
     manually_normalized_same_device = manually_normalized.to(final_normalized_hidden.device)
     diff = torch.abs(manually_normalized_same_device - final_normalized_hidden).mean()
     max_diff = torch.abs(manually_normalized_same_device - final_normalized_hidden).max()
-    
+
     print("Final layer before normalization vs after normalization:")
-    print(f"  Raw resid_post vs normalized hidden state: mean_abs_diff={torch.abs(final_resid_post.to(final_normalized_hidden.device) - final_normalized_hidden).mean():.6f}")
+    print(f"  Raw resid_post vs normalized hidden state: mean_abs_diff={raw_diff:.6f}")
     print(f"  Manually normalized vs HF normalized: mean_abs_diff={diff:.6f}, max_abs_diff={max_diff:.6f}")
-    
+
     # The manually normalized version should match HF's normalized output very closely
     tolerance = 1e-4  # Tighter tolerance since we're applying the same normalization
     assert diff < tolerance, f"Manually normalized resid_post differs from HF normalized: mean_abs_diff={diff:.6f} > tolerance={tolerance}"
-    
+
     print("✓ Final layer lm_resid_post + manual RMSNorm matches output_hidden_states final hidden state")

@@ -1,5 +1,5 @@
 import torch
-from vlm_spectra.models.HookedVLM import HookedVLM
+from vlm_spectra import HookedVLM
 import pytest
 
 from PIL import Image
@@ -8,13 +8,14 @@ import os
 
 MODEL_NAMES = [
     "ByteDance-Seed/UI-TARS-1.5-7B",
+    "Qwen/Qwen3-VL-8B-Instruct",
 ]
 
 SAVE_FILES = True
 
 @pytest.fixture(scope="module", params=MODEL_NAMES)
 def model(request):
-    return HookedVLM(request.param)
+    return HookedVLM.from_pretrained(request.param)
 
 
 def generate_random_image(width=224, height=224, num_channels=3):
@@ -32,6 +33,10 @@ def generate_checkered_image(width=224, height=224, num_channels=3, checkered_si
             color = (255, 255, 255) if (x + y) % (checkered_size * 2) < checkered_size else (0, 0, 0)
             image.paste(color, (x, y, x + checkered_size, y + checkered_size))
     return image
+
+
+def get_patch_size(model):
+    return model.model.config.vision_config.patch_size
 
 def test_hookedvlm(model):
     assert model is not None
@@ -118,8 +123,12 @@ def test_get_image_token_id(model):
 def test_get_image_token_range(model, multiplier):
     """Test that get_image_token_range returns correct start/end indices"""
     # Generate checkered image with different sizes
-    patch_size = 14
-    image = generate_checkered_image(width=patch_size*multiplier, height=patch_size*multiplier)
+    patch_size = get_patch_size(model)
+    image = generate_checkered_image(
+        width=patch_size * multiplier,
+        height=patch_size * multiplier,
+        checkered_size=patch_size,
+    )
     
     # Get inputs
     inputs = model.prepare_messages("Describe the image.", image)
@@ -164,8 +173,12 @@ def test_get_image_token_range_no_image():
 @pytest.mark.parametrize("multiplier", [8, 16, 24])
 def test_generate_patch_overview(model, multiplier):
     # Generate checkered image
-    patch_size = 14
-    image = generate_checkered_image(width=patch_size*multiplier, height=patch_size*multiplier)
+    patch_size = get_patch_size(model)
+    image = generate_checkered_image(
+        width=patch_size * multiplier,
+        height=patch_size * multiplier,
+        checkered_size=patch_size,
+    )
 
     # Verify that in the image, there are an equal number of black and white pixels
     image_array = np.array(image)
