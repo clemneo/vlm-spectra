@@ -6,6 +6,7 @@
 - Qwen/Qwen2.5-VL-7B
 - Qwen/Qwen2.5-VL-7B-Instruct
 - Qwen/Qwen3-VL-8B-Instruct
+- HuggingFaceTB/SmolVLM-Instruct
 
 ## Adding a new model
 

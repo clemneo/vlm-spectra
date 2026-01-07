@@ -243,7 +243,7 @@ class HookedVLM:
 
         vision_config = self.model.config.vision_config
         patch_size = vision_config.patch_size
-        spatial_merge_size = vision_config.spatial_merge_size
+        spatial_merge_size = getattr(vision_config, "spatial_merge_size", 1)
         resized_height, resized_width = smart_resize(
             height,
             width,
@@ -350,9 +350,15 @@ class HookedVLM:
                 messages.append({"role": "assistant", "content": assistant_prefill})
 
             if assistant_prefill:
-                text = self.processor.apply_chat_template(
-                    messages, tokenize=False, continue_final_message=True
-                )
+                try:
+                    text = self.processor.apply_chat_template(
+                        messages, tokenize=False, continue_final_message=True
+                    )
+                except ValueError:
+                    text = self.processor.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
+                    )
+                    text += assistant_prefill
             else:
                 text = self.processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
@@ -381,6 +387,20 @@ class HookedVLM:
             padding=True,
             return_tensors="pt",
         )
+
+        if "image_grid_thw" not in inputs and "pixel_values" in inputs:
+            pv = inputs["pixel_values"]
+            _, num_images, _, height, width = pv.shape
+            patch = getattr(getattr(self.processor, "vision_config", None), "patch_size", None)
+            if patch is None and hasattr(self.processor, "image_processor"):
+                patch = getattr(self.processor.image_processor, "patch_size", None)
+            patch = patch or 1
+            grid_h = height // patch
+            grid_w = width // patch
+            inputs["image_grid_thw"] = torch.tensor(
+                [[num_images, grid_h, grid_w] for _ in range(pv.shape[0])],
+                dtype=torch.int64,
+            )
 
         if return_text:
             return inputs, batch_texts

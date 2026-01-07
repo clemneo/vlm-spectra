@@ -45,4 +45,4 @@ class ModelRegistry:
         return model, processor, adapter
 
 
-from vlm_spectra.models.adapters import qwen25_vl, qwen3_vl  # noqa: F401,E402
+from vlm_spectra.models.adapters import qwen25_vl, qwen3_vl, smolvlm  # noqa: F401,E402

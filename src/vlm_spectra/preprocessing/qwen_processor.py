@@ -46,9 +46,16 @@ class QwenProcessor(BaseProcessor):
             messages.append({"role": "assistant", "content": assistant_prefill})
 
         if assistant_prefill:
-            rendered_text = self.processor.apply_chat_template(
-                messages, tokenize=False, continue_final_message=True
-            )
+            try:
+                rendered_text = self.processor.apply_chat_template(
+                    messages, tokenize=False, continue_final_message=True
+                )
+            except ValueError:
+                # Some templates don't support continue_final_message; fall back to generation prompt + manual prefill.
+                rendered_text = self.processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                rendered_text += assistant_prefill
         else:
             rendered_text = self.processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -65,6 +72,21 @@ class QwenProcessor(BaseProcessor):
             padding=True,
             return_tensors="pt",
         )
+
+        # Provide a lightweight image_grid_thw if the processor doesn't return one (e.g., SmolVLM).
+        if "image_grid_thw" not in inputs and "pixel_values" in inputs:
+            pv = inputs["pixel_values"]
+            # pixel_values shape: (batch, num_images, 3, H, W)
+            _, num_images, _, height, width = pv.shape
+            patch = getattr(getattr(self.processor, "vision_config", None), "patch_size", None)
+            if patch is None and hasattr(self.processor, "image_processor"):
+                patch = getattr(self.processor.image_processor, "patch_size", None)
+            patch = patch or 1
+            grid_h = height // patch
+            grid_w = width // patch
+            inputs["image_grid_thw"] = torch.tensor(
+                [[num_images, grid_h, grid_w]], dtype=torch.int64
+            )
 
         if return_text:
             return inputs, rendered_text
