@@ -15,6 +15,8 @@ from conftest import generate_random_image, generate_checkered_image
 class LayerReplacementHook:
     """Hook that replaces layer output with a stored tensor."""
 
+    hook_point = "lm.layer.post"
+
     def __init__(self, layer: int, replacement: torch.Tensor):
         self.layer = layer
         self.replacement = replacement
@@ -30,6 +32,8 @@ class LayerReplacementHook:
 class LayerModificationHook:
     """Hook that modifies layer output (e.g., zeros it out)."""
 
+    hook_point = "lm.layer.post"
+
     def __init__(self, layer: int):
         self.layer = layer
 
@@ -38,42 +42,6 @@ class LayerModificationHook:
         if isinstance(output, tuple):
             return (torch.zeros_like(output[0]),) + output[1:]
         return torch.zeros_like(output)
-
-
-class AttnPreHook:
-    """Pre-hook for attention layers that can modify inputs."""
-
-    def __init__(self, layer: int, hidden_replacement: torch.Tensor = None):
-        self.layer = layer
-        self.hidden_replacement = hidden_replacement
-
-    def __call__(self, module, args, kwargs):
-        """Modify attention inputs."""
-        if self.hidden_replacement is not None:
-            # Replace hidden states (first positional arg or kwarg)
-            if len(args) > 0:
-                new_args = (self.hidden_replacement,) + args[1:]
-                return new_args, kwargs
-            elif "hidden_states" in kwargs:
-                new_kwargs = kwargs.copy()
-                new_kwargs["hidden_states"] = self.hidden_replacement
-                return args, new_kwargs
-        return args, kwargs
-
-
-class ModuleHook:
-    """Hook for specific modules (o_proj, mlp, self_attn)."""
-
-    def __init__(self, layer: int, module_name: str, hook_type: str = "pre"):
-        self.layer = layer
-        self.module_name = module_name
-        self.hook_type = hook_type
-        self.captured = None
-
-    def __call__(self, module, input_or_output):
-        """Capture the input or output."""
-        self.captured = input_or_output
-        return input_or_output
 
 
 class TestActivationPatching:
@@ -263,81 +231,3 @@ class TestHookLifecycle:
             output = model.forward(inputs)
 
         assert hasattr(output, "logits")
-
-
-class TestAttnHooks:
-    """Test attention-specific hooks."""
-
-    def test_attn_pre_hook_registers(self, model):
-        """Attention pre-hooks should register correctly."""
-        image = generate_random_image()
-        inputs = model.prepare_messages("Describe the image.", image)
-
-        hook = AttnPreHook(layer=0)
-
-        # Should not error
-        with model.run_with_attn_hooks([hook]):
-            output = model.forward(inputs)
-
-        assert hasattr(output, "logits")
-
-
-class TestModuleHooks:
-    """Test module-specific hooks."""
-
-    def test_hook_on_o_proj(self, model):
-        """Hooks on o_proj module should work."""
-        image = generate_random_image()
-        inputs = model.prepare_messages("Describe the image.", image)
-
-        hook = ModuleHook(layer=0, module_name="o_proj", hook_type="post")
-
-        with model.run_with_module_hooks([hook]):
-            model.forward(inputs)
-
-        assert hook.captured is not None
-
-    def test_hook_on_mlp(self, model):
-        """Hooks on MLP module should work."""
-        image = generate_random_image()
-        inputs = model.prepare_messages("Describe the image.", image)
-
-        hook = ModuleHook(layer=0, module_name="mlp", hook_type="post")
-
-        with model.run_with_module_hooks([hook]):
-            model.forward(inputs)
-
-        assert hook.captured is not None
-
-    def test_hook_on_self_attn(self, model):
-        """Hooks on self_attn module should work."""
-        image = generate_random_image()
-        inputs = model.prepare_messages("Describe the image.", image)
-
-        hook = ModuleHook(layer=0, module_name="self_attn", hook_type="post")
-
-        with model.run_with_module_hooks([hook]):
-            model.forward(inputs)
-
-        assert hook.captured is not None
-
-    def test_pre_vs_post_hook(self, model):
-        """Pre and post hooks should capture at different times."""
-        image = generate_random_image()
-        inputs = model.prepare_messages("Describe the image.", image)
-
-        pre_hook = ModuleHook(layer=0, module_name="mlp", hook_type="pre")
-        post_hook = ModuleHook(layer=0, module_name="mlp", hook_type="post")
-
-        with model.run_with_module_hooks([pre_hook]):
-            model.forward(inputs)
-        pre_captured = pre_hook.captured
-
-        with model.run_with_module_hooks([post_hook]):
-            model.forward(inputs)
-        post_captured = post_hook.captured
-
-        # Pre-hook captures input, post-hook captures output
-        # They should have different shapes or values
-        assert pre_captured is not None
-        assert post_captured is not None

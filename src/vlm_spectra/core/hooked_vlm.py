@@ -142,61 +142,21 @@ class HookedVLM:
             self.cache = cache._data
 
     @contextmanager
-    def run_with_hooks(self, hooks, test=None):
-        _ = test
+    def run_with_hooks(self, hooks):
+        """Unified hook interface that dispatches based on hook.hook_point."""
         handles = []
 
         for hook in hooks:
-            handle = self.adapter.get_lm_layer(hook.layer).register_forward_hook(
-                hook, with_kwargs=True
-            )
-            handles.append(handle)
+            hook_point = getattr(hook, "hook_point", "lm.layer.post")
+            module = self._get_module_for_hook_point(hook_point, hook.layer)
+            is_pre = hook_point.endswith(".pre")
 
-        try:
-            yield
-        finally:
-            for handle in handles:
-                handle.remove()
-
-    @contextmanager
-    def run_with_attn_hooks(self, hooks):
-        handles = []
-        for hook in hooks:
-            handle = self.adapter.get_lm_attn(hook.layer).register_forward_pre_hook(
-                hook, with_kwargs=True
-            )
-            handles.append(handle)
-        try:
-            yield
-        finally:
-            for handle in handles:
-                handle.remove()
-
-    @contextmanager
-    def run_with_module_hooks(self, hooks):
-        handles = []
-
-        for hook in hooks:
-            if hasattr(hook, "layer") and hasattr(hook, "module_name"):
-                if hook.module_name == "o_proj":
-                    module = self.adapter.get_lm_o_proj(hook.layer)
-                elif hook.module_name == "mlp":
-                    module = self.adapter.get_lm_mlp(hook.layer)
-                elif hook.module_name == "self_attn":
-                    module = self.adapter.get_lm_attn(hook.layer)
-                else:
-                    raise ValueError(f"Unsupported module name: {hook.module_name}")
-            elif hasattr(hook, "module"):
-                module = hook.module
-            else:
-                raise ValueError(
-                    "Hook must have either (layer, module_name) or module attribute"
+            if is_pre:
+                handle = module.register_forward_pre_hook(
+                    self._wrap_pre_hook(hook), with_kwargs=True
                 )
-
-            if hasattr(hook, "hook_type") and hook.hook_type == "post":
-                handle = module.register_forward_hook(hook, with_kwargs=False)
             else:
-                handle = module.register_forward_pre_hook(hook, with_kwargs=False)
+                handle = module.register_forward_hook(hook, with_kwargs=True)
             handles.append(handle)
 
         try:
@@ -204,6 +164,29 @@ class HookedVLM:
         finally:
             for handle in handles:
                 handle.remove()
+
+    def _get_module_for_hook_point(self, hook_point: str, layer: int):
+        """Map hook_point string to actual module."""
+        if hook_point in ("lm.layer.pre", "lm.layer.post"):
+            return self.adapter.get_lm_layer(layer)
+        elif hook_point == "lm.mlp.out":
+            return self.adapter.get_lm_mlp(layer)
+        elif hook_point in ("lm.attn.out", "lm.attn.pre"):
+            return self.adapter.get_lm_attn(layer)
+        else:
+            raise ValueError(f"Unknown hook_point: {hook_point}")
+
+    def _wrap_pre_hook(self, hook):
+        """Wrap hook to match pre-hook signature while keeping unified API."""
+
+        def wrapper(module, args, kwargs):
+            # Call hook with output=None for pre-hooks
+            result = hook(module, args, kwargs, None)
+            if result is not None:
+                return result  # Modified args/kwargs
+            return args, kwargs
+
+        return wrapper
 
     @property
     def lm_num_layers(self) -> int:

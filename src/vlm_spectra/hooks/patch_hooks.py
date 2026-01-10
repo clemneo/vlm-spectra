@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Optional
 
 import torch
 
@@ -15,6 +15,8 @@ def _select_output_tensor(output):
 
 class PatchResidualHook(Hook):
     """Replace residual stream at a specific token position."""
+
+    hook_point = "lm.layer.post"
 
     def __init__(self, layer: int, token_idx: int, replacement: torch.Tensor) -> None:
         self.layer = layer
@@ -32,6 +34,8 @@ class PatchResidualHook(Hook):
 
 class PatchHeadHook(Hook):
     """Replace attention head output."""
+
+    hook_point = "lm.attn.out"
 
     def __init__(
         self,
@@ -60,6 +64,8 @@ class PatchHeadHook(Hook):
 class PatchMLPHook(Hook):
     """Replace MLP output at specific token position."""
 
+    hook_point = "lm.mlp.out"
+
     def __init__(self, layer: int, replacement: torch.Tensor, token_idx: int) -> None:
         self.layer = layer
         self.replacement = replacement
@@ -71,37 +77,4 @@ class PatchMLPHook(Hook):
         _ = kwargs
         mlp_out = _select_output_tensor(output)
         mlp_out[0, self.token_idx] = self.replacement
-        return output
-
-
-class ZeroAblationHook(Hook):
-    """Zero out activations at specified positions."""
-
-    def __init__(self, layer: int, positions: Iterable[int]) -> None:
-        self.layer = layer
-        self.positions = list(positions)
-
-    def __call__(self, module, args, kwargs, output):
-        _ = module
-        _ = args
-        _ = kwargs
-        tensor = _select_output_tensor(output)
-        tensor[0, self.positions] = 0
-        return output
-
-
-class MeanAblationHook(Hook):
-    """Replace activations with mean at specified positions."""
-
-    def __init__(self, layer: int, positions: Iterable[int]) -> None:
-        self.layer = layer
-        self.positions = list(positions)
-
-    def __call__(self, module, args, kwargs, output):
-        _ = module
-        _ = args
-        _ = kwargs
-        tensor = _select_output_tensor(output)
-        mean_value = tensor.mean(dim=1, keepdim=True)
-        tensor[0, self.positions] = mean_value[0]
         return output

@@ -283,3 +283,7 @@ class TestBatchGradients:
         if require_grads:
             loss = output.logits[0, 0, :10].sum()
             loss.backward()
+
+            # Clean up gradients to free memory for subsequent tests
+            model.model.zero_grad(set_to_none=True)
+            model.model.requires_grad_(False)

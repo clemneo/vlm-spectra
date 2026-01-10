@@ -31,9 +31,19 @@ def pytest_addoption(parser):
     )
 
 
-@pytest.fixture(scope="module", params=MODEL_NAMES)
+@pytest.fixture(autouse=True)
+def cleanup_gpu_memory():
+    """Automatically clean up GPU memory after each test."""
+    yield
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+@pytest.fixture(scope="session", params=MODEL_NAMES)
 def model(request):
-    """Load a HookedVLM model. Module-scoped for efficiency.
+    """Load a HookedVLM model. Session-scoped so all tests for one model
+    run before moving to the next, preventing OOM from multiple models.
 
     Explicitly cleans up GPU memory after each model to prevent OOM
     when testing multiple models sequentially.
@@ -72,12 +82,12 @@ def small_image():
     return generate_random_image(width=28, height=28)
 
 
-def generate_random_image(width=112, height=112, num_channels=3, seed=None):
+def generate_random_image(width=56, height=56, num_channels=3, seed=None):
     """Generate a random RGB image.
 
     Args:
-        width: Image width in pixels
-        height: Image height in pixels
+        width: Image width in pixels (default 56 for memory efficiency)
+        height: Image height in pixels (default 56 for memory efficiency)
         num_channels: Number of color channels (3 for RGB)
         seed: Optional random seed for reproducibility
 
@@ -92,7 +102,7 @@ def generate_random_image(width=112, height=112, num_channels=3, seed=None):
     return Image.fromarray(random_array)
 
 
-def generate_checkered_image(width=112, height=112, checkered_size=14, seed=None):
+def generate_checkered_image(width=56, height=56, checkered_size=14, seed=None):
     """Generate a black and white checkered pattern image.
 
     Useful for deterministic testing where pixel patterns matter.

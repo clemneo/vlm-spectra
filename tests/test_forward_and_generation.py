@@ -65,7 +65,7 @@ class TestForward:
     def test_forward_with_attentions(self, model):
         """Forward with output_attentions=True should return attention weights."""
         # Use smaller image - attention matrices are O(seq_len^2) memory
-        image = generate_random_image(width=200, height=200)
+        image = generate_random_image(width=28, height=28)
         inputs = model.prepare_messages("Describe the image.", image)
         outputs = model.forward(inputs, output_attentions=True)
 
@@ -83,6 +83,10 @@ class TestForward:
         # Should be able to compute gradients
         loss = outputs.logits[0, 0, :10].sum()
         loss.backward()
+
+        # Clean up gradients to free memory for subsequent tests
+        model.model.zero_grad(set_to_none=True)
+        model.model.requires_grad_(False)
 
     def test_forward_no_nan_or_inf(self, model):
         """Forward pass should not produce NaN or Inf values."""
@@ -187,6 +191,10 @@ class TestGenerate:
         outputs = model.generate(inputs, max_new_tokens=2, require_grads=True)
 
         assert hasattr(outputs, "sequences")
+
+        # Clean up gradients to free memory for subsequent tests
+        model.model.zero_grad(set_to_none=True)
+        model.model.requires_grad_(False)
 
     def test_generate_with_prefill(self, model):
         """Generate with assistant prefill should include prefill in output."""
