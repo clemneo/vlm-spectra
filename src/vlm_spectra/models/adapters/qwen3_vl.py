@@ -193,6 +193,7 @@ class Qwen3VLAdapter(ModelAdapter):
             hidden_states=hidden_states,
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
+            output_attentions=True,
         )
         return attn_weights
 

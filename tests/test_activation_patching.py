@@ -178,6 +178,23 @@ class TestActivationPatching:
 class TestHookLifecycle:
     """Test hook lifecycle management."""
 
+    def test_cache_and_patch_hooks_can_nest(self, model):
+        """Cache hooks should survive patch-hook contexts and vice versa."""
+        image = generate_random_image()
+        inputs = model.prepare_messages("Describe the image.", image)
+
+        hook = LayerModificationHook(layer=0)
+        with model.run_with_cache(["lm_resid_post"]):
+            with model.run_with_hooks([hook]):
+                patched_output = model.forward(inputs)
+            unpatched_output = model.forward(inputs)
+
+        assert model.cache is not None
+        assert ("lm_resid_post", 0) in model.cache
+        assert not torch.allclose(
+            patched_output.logits, unpatched_output.logits, atol=1e-3
+        )
+
     def test_hooks_are_removed_after_context(self, model):
         """Hooks should be removed after context manager exits."""
         image = generate_random_image()
