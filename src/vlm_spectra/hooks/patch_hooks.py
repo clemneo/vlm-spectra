@@ -33,9 +33,9 @@ class PatchResidualHook(Hook):
 
 
 class PatchHeadHook(Hook):
-    """Replace attention head output."""
+    """Replace attention head output before o_proj projection."""
 
-    hook_point = "lm.attn.out"
+    hook_point = "lm.attn.head"
 
     def __init__(
         self,
@@ -48,17 +48,56 @@ class PatchHeadHook(Hook):
         self.head_idx = head_idx
         self.replacement = replacement
         self.token_idx = token_idx
+        self._num_heads: Optional[int] = None
+
+    def set_num_heads(self, num_heads: int) -> None:
+        """Called by hook manager to inject adapter's num_heads."""
+        self._num_heads = num_heads
 
     def __call__(self, module, args, kwargs, output):
+        """Modify concatenated heads before o_proj.
+
+        Args shape: [batch, seq, num_heads * head_dim]
+        We reshape to [batch, seq, num_heads, head_dim], patch, reshape back.
+        """
         _ = module
-        _ = args
-        _ = kwargs
-        attn_out = _select_output_tensor(output)
-        if self.token_idx is None:
-            attn_out[0, :, self.head_idx] = self.replacement
+        _ = output  # None for pre-hooks
+
+        if self._num_heads is None:
+            raise RuntimeError(
+                "num_heads not set. Hook must be registered via HookManager."
+            )
+
+        # Get input tensor
+        if len(args) > 0:
+            concat_heads = args[0]
         else:
-            attn_out[0, self.token_idx, self.head_idx] = self.replacement
-        return output
+            concat_heads = kwargs["hidden_states"]
+
+        batch, seq, hidden = concat_heads.shape
+        head_dim = hidden // self._num_heads
+
+        # Reshape to [batch, seq, heads, head_dim]
+        heads_separated = concat_heads.view(batch, seq, self._num_heads, head_dim)
+
+        # Patch the specific head
+        if self.token_idx is None:
+            # replacement shape: [seq, head_dim]
+            heads_separated[0, :, self.head_idx] = self.replacement
+        else:
+            # replacement shape: [head_dim]
+            heads_separated[0, self.token_idx, self.head_idx] = self.replacement
+
+        # Reshape back to [batch, seq, hidden]
+        modified = heads_separated.view(batch, seq, hidden)
+
+        # Return modified args for pre-hook
+        if len(args) > 0:
+            return (modified,) + args[1:], kwargs
+        else:
+            new_kwargs = dict(kwargs)
+            new_kwargs["hidden_states"] = modified
+            return args, new_kwargs
 
 
 class PatchMLPHook(Hook):

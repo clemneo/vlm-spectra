@@ -18,6 +18,7 @@ class HookPointRegistry:
         "lm.layer.pre": {"module_getter": "get_lm_layer", "is_pre_hook": True},
         "lm.layer.post": {"module_getter": "get_lm_layer", "is_pre_hook": False},
         "lm.attn.out": {"module_getter": "get_lm_o_proj", "is_pre_hook": False},
+        "lm.attn.head": {"module_getter": "get_lm_o_proj", "is_pre_hook": True},
         "lm.attn.pre": {"module_getter": "get_lm_attn", "is_pre_hook": True},
         "lm.attn.pattern": {"module_getter": "get_lm_attn", "is_pre_hook": True},
         "lm.mlp.out": {"module_getter": "get_lm_mlp", "is_pre_hook": False},
@@ -28,6 +29,7 @@ class HookPointRegistry:
         "lm_resid_post": "lm.layer.post",
         "lm_resid_mid": "lm.layer.mid",
         "lm_attn_out": "lm.attn.out",
+        "lm_attn_head": "lm.attn.head",
         "lm_attn_pattern": "lm.attn.pattern",
         "lm_mlp_out": "lm.mlp.out",
     }
@@ -114,6 +116,10 @@ class HookManager:
         for hook in hooks:
             hook_point = getattr(hook, "hook_point", "lm.layer.post")
             layer = hook.layer
+
+            # Inject num_heads for hooks that need it (e.g., PatchHeadHook)
+            if hasattr(hook, "set_num_heads"):
+                hook.set_num_heads(self._adapter.lm_num_heads)
 
             module = HookPointRegistry.get_module(self._adapter, hook_point, layer)
             is_pre = HookPointRegistry.is_pre_hook(hook_point)
@@ -258,10 +264,18 @@ class HookManager:
         return hook
 
     def _wrap_pre_hook(self, hook: "Hook"):
-        """Wrap a Hook object for pre-hook signature."""
+        """Wrap a Hook object for pre-hook signature.
+
+        Pre-hooks can return (args, kwargs) to modify inputs.
+        """
         def wrapper(module, args, kwargs):
             result = hook(module, args, kwargs, None)
             if result is not None:
+                # Support returning (new_args, new_kwargs) tuple
+                if isinstance(result, tuple) and len(result) == 2:
+                    new_args, new_kwargs = result
+                    if isinstance(new_args, tuple) and isinstance(new_kwargs, dict):
+                        return new_args, new_kwargs
                 return result
             return None
 
