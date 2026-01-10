@@ -27,6 +27,10 @@ test = [
     "pytest-cov",
     "pytest-mock",
 ]
+examples = [
+    "matplotlib>=3.7",
+    "tqdm>=4.65",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

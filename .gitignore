@@ -14,6 +14,7 @@ wheels/
 
 # Test files
 tests/tmp/
+tmp/
 
 # Ruff
 .ruff_cache/
