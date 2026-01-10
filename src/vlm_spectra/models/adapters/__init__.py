@@ -1,6 +1,7 @@
-"""Model-specific adapters."""
+"""Model-specific adapters.
 
-from .qwen25_vl import Qwen25VLAdapter
-from .qwen3_vl import Qwen3VLAdapter
+Adapters are auto-discovered by ModelRegistry. Each adapter file
+checks its own dependencies and only registers if available.
+"""
 
-__all__ = ["Qwen25VLAdapter", "Qwen3VLAdapter"]
+# No explicit imports needed - discovery happens lazily via ModelRegistry

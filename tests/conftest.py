@@ -8,13 +8,12 @@ import torch
 from PIL import Image
 
 from vlm_spectra import HookedVLM
+from vlm_spectra.models.registry import ModelRegistry
 
 
-# Models to test against - add new models here when implementing new adapters
-MODEL_NAMES = [
-    "ByteDance-Seed/UI-TARS-1.5-7B",
-    "Qwen/Qwen3-VL-8B-Instruct",
-]
+# Get available models from registry (triggers lazy discovery)
+# Only models whose dependencies are available will be listed
+MODEL_NAMES = ModelRegistry.list_supported_models()
 
 MODEL_ALIASES = {
     "uitars1.5-7b": "ByteDance-Seed/UI-TARS-1.5-7B",
