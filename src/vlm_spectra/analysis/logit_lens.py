@@ -13,10 +13,16 @@ def _normalize_hidden_states(
         for hs in hidden_states:
             if hs is not None:
                 if hs.dim() == 3:
+                    if hs.size(0) > 1:
+                        raise ValueError(
+                            "Batch size > 1 not supported for logit lens yet"
+                        )
                     hs = hs.squeeze(0)
                 hidden_states_list.append(hs)
         return torch.stack(hidden_states_list)
     if hidden_states.dim() == 4:
+        if hidden_states.size(1) > 1:
+            raise ValueError("Batch size > 1 not supported for logit lens yet")
         return hidden_states.squeeze(1)
     return hidden_states
 

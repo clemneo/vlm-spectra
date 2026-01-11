@@ -253,8 +253,12 @@ class ModelManager:
         norm_device = norm_layer.weight.device
         lm_head_device = W_U.device
         
-        num_layers = len(attention_heads)
-        num_heads = attention_heads[0].shape[1] if num_layers > 0 else 0
+        num_layers = self.model.adapter.lm_num_layers
+        if attention_heads:
+            first_layer = sorted(attention_heads.keys())[0]
+            num_heads = attention_heads[first_layer].shape[1]
+        else:
+            num_heads = 0
         num_tokens = len(token_ids)
         
         # Initialize results arrays

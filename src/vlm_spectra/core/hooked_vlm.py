@@ -170,7 +170,12 @@ class HookedVLM:
         }
 
     def get_image_token_range(self, inputs) -> tuple[int, int]:
-        input_ids = inputs["input_ids"].squeeze(0)
+        input_ids = inputs["input_ids"]
+        if input_ids.dim() > 1 and input_ids.size(0) > 1:
+            raise ValueError(
+                "Batch size > 1 not supported in get_image_token_range yet"
+            )
+        input_ids = input_ids.squeeze(0)
         image_token_id = self.adapter.get_image_token_id()
 
         image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)[
