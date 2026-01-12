@@ -27,7 +27,39 @@ def model_status():
     return jsonify({
         'loading': model_manager.is_loading,
         'ready': model_manager.is_ready,
-        'error': model_manager.error_message
+        'error': model_manager.error_message,
+        'model_id': model_manager.current_model_id,
+        'model_name': model_manager.get_current_model_name(),
+        'model_label': model_manager.get_current_model_label(),
+        'pending_model_id': model_manager.pending_model_id,
+        'pending_model_label': model_manager.model_options.get(model_manager.pending_model_id, {}).get('label')
+    })
+
+@app.route('/api/model/options')
+def model_options():
+    """List available model options"""
+    return jsonify(model_manager.get_model_options())
+
+@app.route('/api/model/select', methods=['POST'])
+def model_select():
+    """Select and load a model"""
+    data = request.get_json() or {}
+    model_id = data.get('model_id')
+    if not model_id:
+        return jsonify({'error': 'No model_id provided'}), 400
+
+    try:
+        status = model_manager.start_model_loading(model_id)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    if status == "unavailable":
+        return jsonify({'error': 'Model is not available in this environment'}), 400
+
+    return jsonify({
+        'status': status,
+        'model_id': model_id,
+        'model_label': model_manager.model_options[model_id]['label']
     })
 
 def allowed_file(filename):
@@ -207,9 +239,7 @@ if __name__ == '__main__':
     print("Model loading in background...")
     
     # Start model loading in background thread
-    model_thread = threading.Thread(target=model_manager.load_model)
-    model_thread.daemon = True
-    model_thread.start()
+    model_manager.start_model_loading()
     
     print("Demo will be available at http://localhost:55556")
     app.run(host='0.0.0.0', port=55556, debug=False)

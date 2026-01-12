@@ -4,12 +4,15 @@ class DemoApp {
         this.modelReady = false;
         this.isPredicting = false;
         this.uploadedImage = null;
+        this.modelSelector = document.getElementById('modelSelector');
         
         this.initializeEventListeners();
         // Delay initial checks to let external resources load
         setTimeout(() => {
             this.checkDependencies();
-            this.checkModelStatus();
+            this.loadModelOptions().finally(() => {
+                this.checkModelStatus();
+            });
         }, 500);
     }
     
@@ -178,6 +181,94 @@ class DemoApp {
             document.getElementById('analyzeForwardBtn').disabled = false;
         }
     }
+
+    disableAnalysisButtons() {
+        document.getElementById('analyzeGenerationBtn').disabled = true;
+        document.getElementById('analyzeForwardBtn').disabled = true;
+    }
+
+    async loadModelOptions() {
+        if (!this.modelSelector) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/model/options');
+            const data = await response.json();
+
+            this.modelSelector.innerHTML = '';
+
+            data.options.forEach((optionInfo) => {
+                const option = document.createElement('option');
+                option.value = optionInfo.id;
+                option.textContent = optionInfo.available
+                    ? optionInfo.label
+                    : `${optionInfo.label} (unavailable)`;
+                option.disabled = !optionInfo.available;
+                this.modelSelector.appendChild(option);
+            });
+
+            this.modelSelector.value = data.active_model_id || '';
+            this.modelSelector.disabled = false;
+
+            this.modelSelector.addEventListener('change', (event) => {
+                this.handleModelSelection(event.target.value);
+            });
+        } catch (error) {
+            console.error('Error loading model options:', error);
+            this.modelSelector.innerHTML = '<option value="">Failed to load models</option>';
+            this.modelSelector.disabled = true;
+        }
+    }
+
+    async handleModelSelection(modelId) {
+        if (!modelId) {
+            return;
+        }
+
+        this.modelReady = false;
+        this.disableAnalysisButtons();
+
+        try {
+            const response = await fetch('/api/model/select', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ model_id: modelId })
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                const statusElement = document.getElementById('modelStatus');
+                statusElement.className = 'alert alert-danger';
+                statusElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>Error: ${result.error || 'Failed to select model'}`;
+                return;
+            }
+
+            const statusElement = document.getElementById('modelStatus');
+            if (result.status === 'ready') {
+                statusElement.className = 'alert alert-success';
+                statusElement.innerHTML = `<i class="fas fa-check-circle me-2"></i>Model ready: ${result.model_label}`;
+                this.modelReady = true;
+                this.enableAnalysisButtons();
+            } else if (result.status === 'queued') {
+                statusElement.className = 'alert alert-info';
+                statusElement.innerHTML = `<i class="spinner-border spinner-border-sm me-2"></i>Queued model load: ${result.model_label}`;
+            } else {
+                statusElement.className = 'alert alert-info';
+                statusElement.innerHTML = `<i class="spinner-border spinner-border-sm me-2"></i>Loading model: ${result.model_label}`;
+            }
+
+            this.checkModelStatus();
+        } catch (error) {
+            console.error('Error selecting model:', error);
+            const statusElement = document.getElementById('modelStatus');
+            statusElement.className = 'alert alert-danger';
+            statusElement.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>Failed to select model';
+        }
+    }
     
     checkDependencies() {
         const dependencies = [
@@ -247,10 +338,11 @@ class DemoApp {
             const statusElement = document.getElementById('modelStatus');
             const generationBtn = document.getElementById('analyzeGenerationBtn');
             const forwardBtn = document.getElementById('analyzeForwardBtn');
+            const modelLabel = status.model_label || 'Model';
             
             if (status.ready) {
                 statusElement.className = 'alert alert-success';
-                statusElement.innerHTML = '<i class="fas fa-check-circle me-2"></i>Model ready!';
+                statusElement.innerHTML = `<i class="fas fa-check-circle me-2"></i>Model ready: ${modelLabel}`;
                 this.modelReady = true;
                 if (this.uploadedImage) {
                     generationBtn.disabled = false;
@@ -262,8 +354,9 @@ class DemoApp {
                 generationBtn.disabled = true;
                 forwardBtn.disabled = true;
             } else {
+                const pendingLabel = status.pending_model_label ? ` (queued: ${status.pending_model_label})` : '';
                 statusElement.className = 'alert alert-info';
-                statusElement.innerHTML = '<i class="spinner-border spinner-border-sm me-2"></i>Model loading...';
+                statusElement.innerHTML = `<i class="spinner-border spinner-border-sm me-2"></i>Loading ${modelLabel}...${pendingLabel}`;
                 generationBtn.disabled = true;
                 forwardBtn.disabled = true;
                 // Continue checking

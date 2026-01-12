@@ -13,7 +13,26 @@
         <div class="row">
             <div class="col-12">
                 <h1 class="text-center my-4">Computer Vision Interpretability Demo</h1>
-                <p class="text-center text-muted">Interactive demo for UI-TARS model inference on uploaded images</p>
+                <p class="text-center text-muted">Interactive demo for UI-TARS and Qwen3 model inference on uploaded images</p>
+            </div>
+        </div>
+
+        <!-- Model Selection -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                        <div>
+                            <label for="modelSelector" class="form-label mb-1">Model</label>
+                            <select class="form-select" id="modelSelector" disabled>
+                                <option value="">Loading models...</option>
+                            </select>
+                        </div>
+                        <div class="text-muted small" id="modelHelp">
+                            Switching models will reload weights and may take a few minutes.
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         

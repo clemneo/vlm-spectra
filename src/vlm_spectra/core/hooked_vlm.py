@@ -16,6 +16,7 @@ from vlm_spectra.preprocessing.utils.vision_info import (
     MAX_PIXELS,
     MIN_PIXELS,
     process_vision_info,
+    resolve_patch_params,
     smart_resize,
 )
 
@@ -39,7 +40,20 @@ class HookedVLM:
             self.device = next(self.model.parameters()).device
         else:
             self.device = device
+        self.image_factor = self._resolve_image_factor(model)
+        if getattr(self._processor, "image_factor", None) is None:
+            self._processor.image_factor = self.image_factor
         self.cache = None
+
+    @staticmethod
+    def _resolve_image_factor(model) -> int:
+        config = getattr(model, "config", None)
+        vision_config = getattr(config, "vision_config", None)
+        model_name = getattr(config, "name_or_path", None)
+        if vision_config is None:
+            return IMAGE_FACTOR
+        patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
+        return patch_size * spatial_merge_size
 
     @classmethod
     def from_pretrained(
@@ -54,7 +68,10 @@ class HookedVLM:
         model, hf_processor, adapter = ModelRegistry.load(
             model_name, device=device, **kwargs
         )
-        processor = QwenProcessor(hf_processor, default_prompt=default_prompt)
+        image_factor = cls._resolve_image_factor(model)
+        processor = QwenProcessor(
+            hf_processor, default_prompt=default_prompt, image_factor=image_factor
+        )
         instance = cls(model, processor, adapter, device=device)
         instance.model_name = model_name
         return instance
@@ -196,8 +213,10 @@ class HookedVLM:
         width, height = image.size
 
         vision_config = self.model.config.vision_config
-        patch_size = vision_config.patch_size
-        spatial_merge_size = vision_config.spatial_merge_size
+        model_name = getattr(self.model.config, "name_or_path", None)
+        patch_size, spatial_merge_size = resolve_patch_params(
+            vision_config, model_name
+        )
         resized_height, resized_width = smart_resize(
             height,
             width,
@@ -322,7 +341,9 @@ class HookedVLM:
         all_video_inputs = []
 
         for messages in batch_messages:
-            image_inputs, video_inputs = process_vision_info(messages)
+            image_inputs, video_inputs = process_vision_info(
+                messages, image_factor=self.image_factor
+            )
             if image_inputs:
                 all_image_inputs.extend(image_inputs)
             if video_inputs:

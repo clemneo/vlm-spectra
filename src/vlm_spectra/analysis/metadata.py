@@ -6,9 +6,9 @@ from PIL import Image
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
 from vlm_spectra.preprocessing.utils.vision_info import (
-    IMAGE_FACTOR,
     MAX_PIXELS,
     MIN_PIXELS,
+    resolve_patch_params,
     smart_resize,
 )
 
@@ -26,17 +26,20 @@ class VLMMetadataExtractor:
         """Extract metadata from Qwen model inputs/outputs."""
         width, height = original_image.size
 
+        vision_config = model.config.vision_config
+        model_name = getattr(model.config, "name_or_path", None)
+        patch_size, spatial_merge_size = resolve_patch_params(
+            vision_config, model_name
+        )
+        resize_factor = patch_size * spatial_merge_size
+
         resized_height, resized_width = smart_resize(
             height,
             width,
-            factor=IMAGE_FACTOR,
+            factor=resize_factor,
             min_pixels=MIN_PIXELS,
             max_pixels=MAX_PIXELS,
         )
-
-        vision_config = model.config.vision_config
-        patch_size = vision_config.patch_size
-        spatial_merge_size = vision_config.spatial_merge_size
 
         grid_h = resized_height // patch_size
         grid_w = resized_width // patch_size

@@ -45,6 +45,22 @@ VIDEO_TOTAL_PIXELS = int(
 )
 logger.info(f"set VIDEO_TOTAL_PIXELS: {VIDEO_TOTAL_PIXELS}")
 
+_VISION_PATCH_OVERRIDES = {
+    "Qwen/Qwen3-VL-8B-Instruct": (16, 2),
+}
+
+
+def resolve_patch_params(vision_config, model_name: Optional[str] = None) -> tuple[int, int]:
+    """Return patch size and spatial merge size, applying model-specific overrides."""
+    if model_name in _VISION_PATCH_OVERRIDES:
+        return _VISION_PATCH_OVERRIDES[model_name]
+
+    patch_size = getattr(vision_config, "patch_size", None)
+    spatial_merge_size = getattr(vision_config, "spatial_merge_size", None)
+    if patch_size is None or spatial_merge_size is None:
+        return IMAGE_FACTOR, 1
+    return int(patch_size), int(spatial_merge_size)
+
 
 def round_by_factor(number: int, factor: int) -> int:
     """Returns the closest integer to 'number' that is divisible by 'factor'."""
@@ -517,11 +533,13 @@ def extract_vision_info(conversations: list[dict] | list[list[dict]]) -> list[di
 def process_vision_info(
     conversations: list[dict] | list[list[dict]],
     return_video_kwargs: bool = False,
+    image_factor: Optional[int] = None,
 ) -> tuple[
     list[Image.Image] | None,
     list[torch.Tensor | list[Image.Image]] | None,
     Optional[dict],
 ]:
+    effective_image_factor = IMAGE_FACTOR if image_factor is None else image_factor
     vision_infos = extract_vision_info(conversations)
     ## Read images or videos
     image_inputs = []
@@ -529,10 +547,14 @@ def process_vision_info(
     video_sample_fps_list = []
     for vision_info in vision_infos:
         if "image" in vision_info or "image_url" in vision_info:
-            image_inputs.append(fetch_image(vision_info))
+            image_inputs.append(
+                fetch_image(vision_info, size_factor=effective_image_factor)
+            )
         elif "video" in vision_info:
             video_input, video_sample_fps = fetch_video(
-                vision_info, return_video_sample_fps=True
+                vision_info,
+                image_factor=effective_image_factor,
+                return_video_sample_fps=True,
             )
             video_sample_fps_list.append(video_sample_fps)
             video_inputs.append(video_input)

@@ -16,9 +16,11 @@ class QwenProcessor(BaseProcessor):
         self,
         hf_processor,
         default_prompt: Optional[Union[str, Callable[[str], str]]] = None,
+        image_factor: Optional[int] = None,
     ) -> None:
         self.processor = hf_processor
         self.default_prompt = default_prompt
+        self.image_factor = image_factor
 
     def prepare_inputs(
         self,
@@ -57,7 +59,9 @@ class QwenProcessor(BaseProcessor):
         if append_text:
             rendered_text += append_text
 
-        image_inputs, video_inputs = process_vision_info(messages)
+        image_inputs, video_inputs = process_vision_info(
+            messages, image_factor=self.image_factor
+        )
         inputs = self.processor(
             text=[rendered_text],
             images=image_inputs,

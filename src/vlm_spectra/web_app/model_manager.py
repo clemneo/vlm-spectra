@@ -7,6 +7,7 @@ import torch
 import numpy as np
 
 from vlm_spectra import HookedVLM
+from vlm_spectra.models.registry import ModelRegistry
 
 class ModelManager:
     """
@@ -23,30 +24,108 @@ class ModelManager:
         self.is_ready = False
         self.error_message = None
         self.load_lock = threading.Lock()
-        
-    def load_model(self):
-        """Load the model in a background thread"""
+        self.model_options = {
+            "ui-tars": {
+                "label": "UI-TARS 1.5 7B",
+                "model_name": "ByteDance-Seed/UI-TARS-1.5-7B",
+            },
+            "qwen3-vl": {
+                "label": "Qwen3-VL 8B Instruct",
+                "model_name": "Qwen/Qwen3-VL-8B-Instruct",
+            },
+        }
+        self.current_model_id = "ui-tars"
+        self.pending_model_id = None
+
+    def get_model_options(self) -> Dict[str, Any]:
+        supported_models = set(ModelRegistry.list_supported_models())
+        options = []
+        for model_id, info in self.model_options.items():
+            options.append(
+                {
+                    "id": model_id,
+                    "label": info["label"],
+                    "model_name": info["model_name"],
+                    "available": info["model_name"] in supported_models,
+                }
+            )
+        return {
+            "options": options,
+            "active_model_id": self.current_model_id,
+        }
+
+    def get_current_model_label(self) -> str:
+        return self.model_options[self.current_model_id]["label"]
+
+    def get_current_model_name(self) -> str:
+        return self.model_options[self.current_model_id]["model_name"]
+
+    def is_model_available(self, model_id: str) -> bool:
+        supported_models = set(ModelRegistry.list_supported_models())
+        return self.model_options[model_id]["model_name"] in supported_models
+
+    def start_model_loading(self, model_id: Optional[str] = None) -> str:
+        """Start loading a model in a background thread."""
+        if model_id is None:
+            model_id = self.current_model_id
+        if model_id not in self.model_options:
+            raise ValueError(f"Unknown model id: {model_id}")
+        if not self.is_model_available(model_id):
+            return "unavailable"
+
         with self.load_lock:
-            if self.is_loading or self.is_ready:
-                return
-                
-            self.is_loading = True
+            if self.is_loading:
+                self.pending_model_id = model_id
+                return "queued"
+
+            if self.is_ready and self.current_model_id == model_id:
+                return "ready"
+
+            self.pending_model_id = None
+            self.current_model_id = model_id
+            self.is_ready = False
             self.error_message = None
-            
-            try:
-                print("Loading HookedVLM model...")
-                self.model = HookedVLM.from_pretrained(
-                    model_name="ByteDance-Seed/UI-TARS-1.5-7B", device="auto"
-                )
-                
-                self.is_ready = True
-                print("Model loaded successfully!")
-                
-            except Exception as e:
-                self.error_message = str(e)
-                print(f"Error loading model: {e}")
-            finally:
+            self.is_loading = True
+
+            model_thread = threading.Thread(target=self.load_model, args=(model_id,))
+            model_thread.daemon = True
+            model_thread.start()
+            return "loading"
+        
+    def _release_model(self) -> None:
+        self.model = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def load_model(self, model_id: Optional[str] = None):
+        """Load the model in a background thread"""
+        if model_id is None:
+            model_id = self.current_model_id
+
+        model_name = self.model_options[model_id]["model_name"]
+        model_label = self.model_options[model_id]["label"]
+
+        try:
+            print(f"Loading HookedVLM model: {model_label} ({model_name})")
+            self._release_model()
+            self.model = HookedVLM.from_pretrained(model_name=model_name, device="auto")
+            self.is_ready = True
+            print("Model loaded successfully!")
+        except Exception as e:
+            self.model = None
+            self.error_message = str(e)
+            self.is_ready = False
+            print(f"Error loading model: {e}")
+        finally:
+            next_model_id = None
+            with self.load_lock:
                 self.is_loading = False
+                if self.pending_model_id and self.pending_model_id != model_id:
+                    next_model_id = self.pending_model_id
+                    self.pending_model_id = None
+
+            if next_model_id:
+                self.start_model_loading(next_model_id)
     
     def parse_coordinates(self, text: str) -> Tuple[Optional[int], Optional[int]]:
         """
@@ -412,22 +491,28 @@ class ModelManager:
             # Calculate image patch information using existing model logic
             # Get vision config for patch information
             vision_config = self.model.model.config.vision_config
-            patch_size = vision_config.patch_size
-            spatial_merge_size = vision_config.spatial_merge_size
+            model_name = getattr(self.model, "model_name", None)
+            from vlm_spectra.preprocessing.utils.vision_info import (
+                resolve_patch_params,
+            )
+            patch_size, spatial_merge_size = resolve_patch_params(
+                vision_config, model_name
+            )
             
             # Calculate resized dimensions using the model's logic
             width, height = image.size
             from vlm_spectra.preprocessing.utils.vision_info import (
                 smart_resize,
-                IMAGE_FACTOR,
                 MIN_PIXELS,
                 MAX_PIXELS,
             )
+            resize_factor = patch_size * spatial_merge_size
             resized_height, resized_width = smart_resize(
-                height, width,
-                factor=IMAGE_FACTOR,
+                height,
+                width,
+                factor=resize_factor,
                 min_pixels=MIN_PIXELS,
-                max_pixels=MAX_PIXELS
+                max_pixels=MAX_PIXELS,
             )
             
             # Calculate grid dimensions
