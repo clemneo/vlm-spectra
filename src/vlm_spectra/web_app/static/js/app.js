@@ -5,8 +5,19 @@ class DemoApp {
         this.isPredicting = false;
         this.uploadedImage = null;
         this.modelSelector = document.getElementById('modelSelector');
-        
+
+        // Square generation mode properties
+        this.inputMode = 'upload';  // 'upload' or 'generate'
+        this.gridColors = [];       // 2D array of color strings
+        this.gridRows = 10;
+        this.gridCols = 10;
+        this.selectedColor = 'black';
+        this.patchInfo = null;
+        this.generatedImage = null;
+        this.isGridCreated = false;
+
         this.initializeEventListeners();
+        this.initializeModeSelector();
         // Delay initial checks to let external resources load
         setTimeout(() => {
             this.checkDependencies();
@@ -71,7 +82,264 @@ class DemoApp {
             this.handlePaste(e);
         });
     }
-    
+
+    initializeModeSelector() {
+        const modeSelector = document.getElementById('inputModeSelector');
+        const uploadSection = document.getElementById('uploadModeSection');
+        const generateSection = document.getElementById('generateModeSection');
+
+        if (!modeSelector) return;
+
+        modeSelector.addEventListener('change', (e) => {
+            this.inputMode = e.target.value;
+
+            if (this.inputMode === 'upload') {
+                uploadSection.classList.remove('d-none');
+                generateSection.classList.add('d-none');
+                // Enable buttons only if we have an uploaded image
+                if (this.uploadedImage && this.modelReady) {
+                    this.enableAnalysisButtons();
+                } else {
+                    this.disableAnalysisButtons();
+                }
+            } else {
+                uploadSection.classList.add('d-none');
+                generateSection.classList.remove('d-none');
+                // Fetch patch info when switching to generate mode
+                this.fetchPatchInfo();
+                // Enable buttons if grid is created and model is ready
+                if (this.isGridCreated && this.modelReady) {
+                    this.enableAnalysisButtons();
+                } else {
+                    this.disableAnalysisButtons();
+                }
+            }
+        });
+
+        // Initialize grid controls
+        this.initializeGridControls();
+    }
+
+    initializeGridControls() {
+        const applyGridBtn = document.getElementById('applyGridBtn');
+        const gridRowsInput = document.getElementById('gridRows');
+        const gridColsInput = document.getElementById('gridCols');
+        const fillAllBtn = document.getElementById('fillAllBtn');
+        const clearGridBtn = document.getElementById('clearGridBtn');
+        const colorPalette = document.getElementById('colorPalette');
+
+        if (applyGridBtn) {
+            applyGridBtn.addEventListener('click', () => {
+                this.gridRows = parseInt(gridRowsInput.value) || 10;
+                this.gridCols = parseInt(gridColsInput.value) || 10;
+                // Clamp values
+                this.gridRows = Math.max(1, Math.min(50, this.gridRows));
+                this.gridCols = Math.max(1, Math.min(50, this.gridCols));
+                gridRowsInput.value = this.gridRows;
+                gridColsInput.value = this.gridCols;
+                this.createGridCells();
+                this.updateGridInfoText();
+            });
+        }
+
+        // Grid size input listeners
+        if (gridRowsInput) {
+            gridRowsInput.addEventListener('change', () => this.updateGridInfoText());
+        }
+        if (gridColsInput) {
+            gridColsInput.addEventListener('change', () => this.updateGridInfoText());
+        }
+
+        // Fill all button
+        if (fillAllBtn) {
+            fillAllBtn.addEventListener('click', () => {
+                if (!this.isGridCreated) return;
+                for (let row = 0; row < this.gridRows; row++) {
+                    for (let col = 0; col < this.gridCols; col++) {
+                        this.gridColors[row][col] = this.selectedColor;
+                    }
+                }
+                this.refreshGridDisplay();
+            });
+        }
+
+        // Clear grid button
+        if (clearGridBtn) {
+            clearGridBtn.addEventListener('click', () => {
+                if (!this.isGridCreated) return;
+                for (let row = 0; row < this.gridRows; row++) {
+                    for (let col = 0; col < this.gridCols; col++) {
+                        this.gridColors[row][col] = 'black';
+                    }
+                }
+                this.refreshGridDisplay();
+            });
+        }
+
+        // Color palette
+        if (colorPalette) {
+            colorPalette.addEventListener('click', (e) => {
+                if (e.target.classList.contains('color-btn')) {
+                    // Remove active from all buttons
+                    colorPalette.querySelectorAll('.color-btn').forEach(btn => {
+                        btn.classList.remove('active');
+                    });
+                    // Set new active
+                    e.target.classList.add('active');
+                    this.selectedColor = e.target.dataset.color;
+                }
+            });
+        }
+    }
+
+    async fetchPatchInfo() {
+        try {
+            const response = await fetch('/api/model/patch-info');
+            const data = await response.json();
+            this.patchInfo = data;
+            this.updateGridInfoText();
+        } catch (error) {
+            console.error('Error fetching patch info:', error);
+            // Use default patch info
+            this.patchInfo = {
+                patch_size: 14,
+                spatial_merge_size: 2,
+                effective_patch_size: 28
+            };
+            this.updateGridInfoText();
+        }
+    }
+
+    updateGridInfoText() {
+        const infoText = document.getElementById('gridInfoText');
+        const gridRowsInput = document.getElementById('gridRows');
+        const gridColsInput = document.getElementById('gridCols');
+
+        if (!infoText) return;
+
+        const rows = parseInt(gridRowsInput?.value) || this.gridRows;
+        const cols = parseInt(gridColsInput?.value) || this.gridCols;
+        const patchSize = this.patchInfo?.effective_patch_size || 28;
+
+        const imgWidth = cols * patchSize;
+        const imgHeight = rows * patchSize;
+
+        infoText.textContent = `${rows}x${cols} patches = ${imgWidth}x${imgHeight} pixels (patch size: ${patchSize}px)`;
+    }
+
+    createGridCells() {
+        const container = document.getElementById('colorGrid');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        // Initialize grid colors array with black
+        this.gridColors = [];
+        for (let row = 0; row < this.gridRows; row++) {
+            this.gridColors[row] = [];
+            const rowDiv = document.createElement('div');
+            rowDiv.className = 'grid-row';
+
+            for (let col = 0; col < this.gridCols; col++) {
+                this.gridColors[row][col] = 'black';
+
+                const cell = document.createElement('div');
+                cell.className = 'grid-cell';
+                cell.dataset.row = row;
+                cell.dataset.col = col;
+                cell.style.backgroundColor = 'black';
+
+                // Click to paint
+                cell.addEventListener('click', () => this.paintCell(row, col));
+
+                // Drag to paint (mouse enter while button pressed)
+                cell.addEventListener('mouseenter', (e) => {
+                    if (e.buttons === 1) {
+                        this.paintCell(row, col);
+                    }
+                });
+
+                rowDiv.appendChild(cell);
+            }
+            container.appendChild(rowDiv);
+        }
+
+        this.isGridCreated = true;
+
+        // Clear generated image preview since grid changed
+        this.generatedImage = null;
+        document.getElementById('generatedImagePreview')?.classList.add('d-none');
+
+        // Enable analysis buttons if model is ready
+        if (this.modelReady) {
+            this.enableAnalysisButtons();
+        }
+    }
+
+    paintCell(row, col) {
+        this.gridColors[row][col] = this.selectedColor;
+        const cell = document.querySelector(
+            `#colorGrid .grid-cell[data-row="${row}"][data-col="${col}"]`
+        );
+        if (cell) {
+            cell.style.backgroundColor = this.selectedColor;
+        }
+    }
+
+    refreshGridDisplay() {
+        for (let row = 0; row < this.gridRows; row++) {
+            for (let col = 0; col < this.gridCols; col++) {
+                const cell = document.querySelector(
+                    `#colorGrid .grid-cell[data-row="${row}"][data-col="${col}"]`
+                );
+                if (cell) {
+                    cell.style.backgroundColor = this.gridColors[row][col];
+                }
+            }
+        }
+    }
+
+    async generateSquareImage() {
+        try {
+            const response = await fetch('/api/generate-square', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    grid_colors: this.gridColors,
+                    grid_rows: this.gridRows,
+                    grid_cols: this.gridCols
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.generatedImage = result;
+
+                // Update preview
+                const previewImg = document.getElementById('generatedPreview');
+                const previewContainer = document.getElementById('generatedImagePreview');
+                const infoText = document.getElementById('generatedImageInfo');
+
+                if (previewImg && previewContainer) {
+                    previewImg.src = result.url;
+                    previewContainer.classList.remove('d-none');
+                }
+
+                if (infoText) {
+                    infoText.textContent = `${result.dimensions.width}x${result.dimensions.height} pixels (${result.grid_size.rows}x${result.grid_size.cols} patches @ ${result.patch_size}px)`;
+                }
+            }
+
+            return result;
+        } catch (error) {
+            console.error('Error generating square image:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
     async handleImageUpload(file) {
         // Validate file type
         const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/webp'];
@@ -177,8 +445,14 @@ class DemoApp {
     
     enableAnalysisButtons() {
         if (this.modelReady) {
-            document.getElementById('analyzeGenerationBtn').disabled = false;
-            document.getElementById('analyzeForwardBtn').disabled = false;
+            // Check based on current input mode
+            if (this.inputMode === 'upload' && this.uploadedImage) {
+                document.getElementById('analyzeGenerationBtn').disabled = false;
+                document.getElementById('analyzeForwardBtn').disabled = false;
+            } else if (this.inputMode === 'generate' && this.isGridCreated) {
+                document.getElementById('analyzeGenerationBtn').disabled = false;
+                document.getElementById('analyzeForwardBtn').disabled = false;
+            }
         }
     }
 
@@ -344,9 +618,17 @@ class DemoApp {
                 statusElement.className = 'alert alert-success';
                 statusElement.innerHTML = `<i class="fas fa-check-circle me-2"></i>Model ready: ${modelLabel}`;
                 this.modelReady = true;
-                if (this.uploadedImage) {
+                // Enable buttons based on current mode
+                if (this.inputMode === 'upload' && this.uploadedImage) {
                     generationBtn.disabled = false;
                     forwardBtn.disabled = false;
+                } else if (this.inputMode === 'generate' && this.isGridCreated) {
+                    generationBtn.disabled = false;
+                    forwardBtn.disabled = false;
+                }
+                // Also fetch patch info for generate mode if we switch to it
+                if (this.inputMode === 'generate') {
+                    this.fetchPatchInfo();
                 }
             } else if (status.error) {
                 statusElement.className = 'alert alert-danger';
@@ -371,26 +653,52 @@ class DemoApp {
     }
     
     async handleAnalysis(mode) {
-        if (!this.modelReady || this.isPredicting || !this.uploadedImage) {
+        if (!this.modelReady || this.isPredicting) {
             return;
         }
-        
+
+        // Check if we have valid input based on mode
+        if (this.inputMode === 'upload' && !this.uploadedImage) {
+            return;
+        }
+        if (this.inputMode === 'generate' && !this.isGridCreated) {
+            return;
+        }
+
         this.isPredicting = true;
         const isGeneration = mode === 'generation';
         const btnId = isGeneration ? 'analyzeGenerationBtn' : 'analyzeForwardBtn';
         const spinnerId = isGeneration ? 'generationSpinner' : 'forwardSpinner';
         const endpoint = isGeneration ? '/api/predict' : '/api/forward';
-        
+
         const button = document.getElementById(btnId);
         const spinner = document.getElementById(spinnerId);
-        
+
         // Update UI
         document.getElementById('analyzeGenerationBtn').disabled = true;
         document.getElementById('analyzeForwardBtn').disabled = true;
         spinner.classList.remove('d-none');
-        
+
+        // Determine which image to use
+        let imageFilename;
+        if (this.inputMode === 'upload') {
+            imageFilename = this.uploadedImage.filename;
+        } else {
+            // Generate mode - create image first
+            const genResult = await this.generateSquareImage();
+            if (!genResult.success) {
+                this.showError(genResult.error || 'Failed to generate image');
+                document.getElementById('analyzeGenerationBtn').disabled = false;
+                document.getElementById('analyzeForwardBtn').disabled = false;
+                spinner.classList.add('d-none');
+                this.isPredicting = false;
+                return;
+            }
+            imageFilename = genResult.filename;
+        }
+
         const formData = {
-            filename: this.uploadedImage.filename,
+            filename: imageFilename,
             task: document.getElementById('task').value,
             assistant_prefill: document.getElementById('assistantPrefill').value
         };
@@ -912,20 +1220,33 @@ class DemoApp {
     }
     
     async handleDlaAnalysis() {
-        if (!this.modelReady || this.isPredicting || !this.uploadedImage) {
+        if (!this.modelReady || this.isPredicting) {
             return;
         }
-        
+
+        // Check for valid input based on mode
+        if (this.inputMode === 'upload' && !this.uploadedImage) {
+            return;
+        }
+        if (this.inputMode === 'generate' && !this.generatedImage) {
+            return;
+        }
+
         this.isPredicting = true;
         const button = document.getElementById('analyzeDlaBtn');
         const spinner = document.getElementById('dlaSpinner');
-        
+
         // Update UI
         button.disabled = true;
         spinner.classList.remove('d-none');
-        
+
+        // Determine filename based on mode
+        const imageFilename = this.inputMode === 'upload'
+            ? this.uploadedImage.filename
+            : this.generatedImage.filename;
+
         const formData = {
-            filename: this.uploadedImage.filename,
+            filename: imageFilename,
             task: document.getElementById('task').value,
             assistant_prefill: document.getElementById('assistantPrefill').value
         };
@@ -1493,21 +1814,34 @@ class DemoApp {
     }
     
     async handleAttentionAnalysis(layer, head) {
-        if (!this.modelReady || this.isPredicting || !this.uploadedImage) {
+        if (!this.modelReady || this.isPredicting) {
             return;
         }
-        
+
+        // Check for valid input based on mode
+        if (this.inputMode === 'upload' && !this.uploadedImage) {
+            return;
+        }
+        if (this.inputMode === 'generate' && !this.generatedImage) {
+            return;
+        }
+
         this.isPredicting = true;
         const button = document.getElementById('analyzeAttentionBtn');
         const spinner = document.getElementById('attentionSpinner');
         const visualization = document.getElementById('attentionVisualization');
-        
+
         // Update UI
         button.disabled = true;
         spinner.classList.remove('d-none');
-        
+
+        // Determine filename based on mode
+        const imageFilename = this.inputMode === 'upload'
+            ? this.uploadedImage.filename
+            : this.generatedImage.filename;
+
         const formData = {
-            filename: this.uploadedImage.filename,
+            filename: imageFilename,
             task: document.getElementById('task').value,
             assistant_prefill: document.getElementById('assistantPrefill').value,
             layer: parseInt(layer),

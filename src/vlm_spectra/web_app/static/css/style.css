@@ -269,3 +269,87 @@ body {
     border-radius: 0.375rem;
     background-color: #ffffff;
 }
+
+/* Square Generation Mode Styles */
+
+/* Input mode selector */
+#inputModeSelector {
+    max-width: 250px;
+}
+
+/* Color palette buttons */
+.color-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 2px solid #6c757d;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.color-btn:hover {
+    transform: scale(1.1);
+    z-index: 1;
+}
+
+.color-btn.active {
+    box-shadow: 0 0 0 3px #0d6efd;
+    border-color: #0d6efd;
+}
+
+.color-btn[data-color="white"] {
+    border-color: #dee2e6;
+}
+
+.color-btn[data-color="black"] {
+    border-color: #495057;
+}
+
+/* Color grid container */
+#colorGrid {
+    display: inline-block;
+    min-width: 100%;
+}
+
+/* Grid cells */
+.grid-cell {
+    width: 20px;
+    height: 20px;
+    border: 1px solid #333;
+    cursor: pointer;
+    transition: transform 0.1s ease;
+    display: inline-block;
+    box-sizing: border-box;
+}
+
+.grid-cell:hover {
+    transform: scale(1.15);
+    z-index: 1;
+    position: relative;
+    border-color: #fff;
+}
+
+/* Grid row styling */
+.grid-row {
+    display: flex;
+    line-height: 0;
+}
+
+/* Generated image preview - pixelated rendering */
+#generatedPreview {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+}
+
+/* Grid configuration inputs */
+#gridRows, #gridCols {
+    max-width: 100px;
+}
+
+/* Grid info text styling */
+#gridInfoText {
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+}

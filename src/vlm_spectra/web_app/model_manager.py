@@ -64,6 +64,119 @@ class ModelManager:
         supported_models = set(ModelRegistry.list_supported_models())
         return self.model_options[model_id]["model_name"] in supported_models
 
+    def get_patch_info(self) -> Dict[str, Any]:
+        """
+        Get patch size information for the currently loaded model.
+
+        Returns:
+            Dictionary containing patch_size, spatial_merge_size, effective_patch_size, and model_id
+        """
+        if not self.is_ready or self.model is None:
+            return {
+                'error': 'Model not ready',
+                'patch_size': 14,
+                'spatial_merge_size': 2,
+                'effective_patch_size': 28,
+                'model_id': self.current_model_id
+            }
+
+        from vlm_spectra.preprocessing.utils.vision_info import resolve_patch_params
+
+        vision_config = self.model.model.config.vision_config
+        model_name = self.model_options[self.current_model_id]["model_name"]
+        patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
+        effective_patch_size = patch_size * spatial_merge_size
+
+        return {
+            'patch_size': patch_size,
+            'spatial_merge_size': spatial_merge_size,
+            'effective_patch_size': effective_patch_size,
+            'model_id': self.current_model_id
+        }
+
+    def generate_square_image(
+        self,
+        grid_colors: list,
+        grid_rows: int,
+        grid_cols: int
+    ) -> Dict[str, Any]:
+        """
+        Generate an image from a grid of colors for model analysis.
+
+        Each cell in the grid corresponds to one model patch. The image is saved
+        to the uploads folder and can be used with existing analysis endpoints.
+
+        Args:
+            grid_colors: 2D list of color strings (e.g., [['red', 'blue'], ['black', 'white']])
+            grid_rows: Number of rows in the grid
+            grid_cols: Number of columns in the grid
+
+        Returns:
+            Dictionary containing success status, filename, url, dimensions, and patch info
+        """
+        from PIL import Image
+
+        # Get effective patch size from current model
+        patch_info = self.get_patch_info()
+        effective_patch_size = patch_info['effective_patch_size']
+
+        # Color mapping
+        COLOR_MAP = {
+            'red': (255, 0, 0),
+            'green': (0, 255, 0),
+            'blue': (0, 0, 255),
+            'white': (255, 255, 255),
+            'black': (0, 0, 0),
+            'yellow': (255, 255, 0),
+            'cyan': (0, 255, 255),
+            'magenta': (255, 0, 255),
+        }
+
+        # Calculate image dimensions
+        img_width = grid_cols * effective_patch_size
+        img_height = grid_rows * effective_patch_size
+
+        # Create image with black background
+        image = Image.new('RGB', (img_width, img_height), (0, 0, 0))
+
+        # Fill patches
+        for row in range(grid_rows):
+            for col in range(grid_cols):
+                if row < len(grid_colors) and col < len(grid_colors[row]):
+                    color_name = grid_colors[row][col]
+                else:
+                    color_name = 'black'
+
+                rgb = COLOR_MAP.get(color_name, (0, 0, 0))
+
+                x_start = col * effective_patch_size
+                y_start = row * effective_patch_size
+
+                # Fill the patch region
+                for y in range(y_start, y_start + effective_patch_size):
+                    for x in range(x_start, x_start + effective_patch_size):
+                        image.putpixel((x, y), rgb)
+
+        # Save to uploads folder
+        timestamp = int(time.time() * 1000)
+        filename = f"generated_{timestamp}_{grid_rows}x{grid_cols}.png"
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        upload_folder = os.path.join(script_dir, 'static', 'uploads')
+        os.makedirs(upload_folder, exist_ok=True)
+        filepath = os.path.join(upload_folder, filename)
+
+        image.save(filepath, 'PNG')
+
+        return {
+            'success': True,
+            'filename': filename,
+            'url': f'/static/uploads/{filename}',
+            'dimensions': {'width': img_width, 'height': img_height},
+            'grid_size': {'rows': grid_rows, 'cols': grid_cols},
+            'patch_size': effective_patch_size
+        }
+
     def start_model_loading(self, model_id: Optional[str] = None) -> str:
         """Start loading a model in a background thread."""
         if model_id is None:

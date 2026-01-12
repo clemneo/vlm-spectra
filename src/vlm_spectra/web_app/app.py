@@ -1,6 +1,5 @@
 import os
 import time
-import threading
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from vlm_spectra.web_app.model_manager import ModelManager
@@ -61,6 +60,38 @@ def model_select():
         'model_id': model_id,
         'model_label': model_manager.model_options[model_id]['label']
     })
+
+@app.route('/api/model/patch-info')
+def get_patch_info():
+    """Get patch size information for the current model"""
+    patch_info = model_manager.get_patch_info()
+    return jsonify(patch_info)
+
+@app.route('/api/generate-square', methods=['POST'])
+def generate_square_image():
+    """Generate a square image from grid color configuration"""
+    if not model_manager.is_ready:
+        return jsonify({'error': 'Model not ready yet'}), 503
+
+    try:
+        data = request.get_json()
+        grid_colors = data.get('grid_colors')
+        grid_rows = data.get('grid_rows')
+        grid_cols = data.get('grid_cols')
+
+        if not grid_colors or not grid_rows or not grid_cols:
+            return jsonify({'error': 'Missing required fields: grid_colors, grid_rows, grid_cols'}), 400
+
+        result = model_manager.generate_square_image(
+            grid_colors=grid_colors,
+            grid_rows=grid_rows,
+            grid_cols=grid_cols
+        )
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
