@@ -13,7 +13,26 @@
         <div class="row">
             <div class="col-12">
                 <h1 class="text-center my-4">Computer Vision Interpretability Demo</h1>
-                <p class="text-center text-muted">Interactive demo for UI-TARS model inference on uploaded images</p>
+                <p class="text-center text-muted">Interactive demo for UI-TARS and Qwen3 model inference on uploaded images</p>
+            </div>
+        </div>
+
+        <!-- Model Selection -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                        <div>
+                            <label for="modelSelector" class="form-label mb-1">Model</label>
+                            <select class="form-select" id="modelSelector" disabled>
+                                <option value="">Loading models...</option>
+                            </select>
+                        </div>
+                        <div class="text-muted small" id="modelHelp">
+                            Switching models will reload weights and may take a few minutes.
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -64,8 +83,17 @@
                     </div>
                     <div class="card-body">
                         <form id="demoForm">
-                            <!-- Image Upload -->
+                            <!-- Input Mode Selector -->
                             <div class="mb-3">
+                                <label for="inputModeSelector" class="form-label">Input Mode</label>
+                                <select class="form-select" id="inputModeSelector">
+                                    <option value="upload" selected>Image Upload</option>
+                                    <option value="generate">Square Generation</option>
+                                </select>
+                            </div>
+
+                            <!-- Image Upload (shown in upload mode) -->
+                            <div class="mb-3" id="uploadModeSection">
                                 <label for="imageUpload" class="form-label">Upload Image</label>
                                 <div class="drop-zone" id="dropZone">
                                     <div class="drop-zone-content">
@@ -91,7 +119,73 @@
                                     </div>
                                 </div>
                             </div>
-                            
+                            </div><!-- End uploadModeSection -->
+
+                            <!-- Square Generation Mode (hidden by default) -->
+                            <div class="d-none" id="generateModeSection">
+                                <!-- Grid Configuration -->
+                                <div class="mb-3">
+                                    <label class="form-label">Grid Configuration</label>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label for="gridRows" class="form-label small">Rows</label>
+                                            <input type="number" class="form-control" id="gridRows" value="10" min="1" max="50">
+                                        </div>
+                                        <div class="col-6">
+                                            <label for="gridCols" class="form-label small">Columns</label>
+                                            <input type="number" class="form-control" id="gridCols" value="10" min="1" max="50">
+                                        </div>
+                                    </div>
+                                    <div class="mb-2">
+                                        <small class="text-muted" id="gridInfoText">
+                                            Loading patch info...
+                                        </small>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="applyGridBtn">
+                                        Apply Grid Size
+                                    </button>
+                                </div>
+
+                                <!-- Color Palette -->
+                                <div class="mb-3">
+                                    <label class="form-label">Brush Color</label>
+                                    <div class="d-flex flex-wrap gap-1" id="colorPalette">
+                                        <button type="button" class="btn btn-sm color-btn active" data-color="black" style="background-color: black;" title="Black"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="white" style="background-color: white;" title="White"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="red" style="background-color: red;" title="Red"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="green" style="background-color: green;" title="Green"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="blue" style="background-color: blue;" title="Blue"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="yellow" style="background-color: yellow;" title="Yellow"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="cyan" style="background-color: cyan;" title="Cyan"></button>
+                                        <button type="button" class="btn btn-sm color-btn" data-color="magenta" style="background-color: magenta;" title="Magenta"></button>
+                                    </div>
+                                    <div class="mt-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="fillAllBtn">Fill All</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="clearGridBtn">Clear (Black)</button>
+                                    </div>
+                                </div>
+
+                                <!-- Color Grid Editor -->
+                                <div class="mb-3">
+                                    <label class="form-label">Color Grid Editor</label>
+                                    <div id="colorGrid" class="border rounded p-2" style="overflow: auto; max-height: 400px; background-color: #1a1a1a;">
+                                        <!-- Grid cells will be dynamically generated -->
+                                        <div class="text-muted text-center py-3">Click "Apply Grid Size" to create the grid</div>
+                                    </div>
+                                </div>
+
+                                <!-- Generated Image Preview -->
+                                <div class="mb-3 d-none" id="generatedImagePreview">
+                                    <label class="form-label">Generated Image Preview</label>
+                                    <div class="text-center">
+                                        <img id="generatedPreview" src="" alt="Generated preview" class="img-thumbnail" style="max-height: 200px; image-rendering: pixelated;">
+                                        <div class="mt-2">
+                                            <small class="text-muted" id="generatedImageInfo"></small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div><!-- End generateModeSection -->
+
                             <!-- Task -->
                             <div class="mb-3">
                                 <label for="task" class="form-label">Task</label>

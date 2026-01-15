@@ -30,11 +30,11 @@ uv pip install -e .
 ### Basic Usage
 
 ```python
-from vlm_spectra.models.HookedVLM import HookedVLM
+from vlm_spectra import HookedVLM
 from PIL import Image
 
 # Initialize the model
-model = HookedVLM("ByteDance-Seed/UI-TARS-1.5-7B")
+model = HookedVLM.from_pretrained("ByteDance-Seed/UI-TARS-1.5-7B")
 
 # Load an image
 image = Image.open("screenshot.png")
@@ -265,7 +265,7 @@ uv run ruff format src/ tests/
 
 ## Architecture
 
-- **HookedVLM** (`src/vlm_spectra/models/HookedVLM.py`): Main model wrapper with interpretability hooks
+- **HookedVLM** (`src/vlm_spectra/core/hooked_vlm.py`): Main model wrapper with interpretability hooks
 - **ModelAdapter** (`src/vlm_spectra/models/ModelAdapter.py`): Adapter pattern for different model architectures
 - **Logit Lens** (`src/vlm_spectra/logit_lens/`): Visualization tools for token predictions across layers
 - **Web App** (`src/vlm_spectra/web_app/`): Flask-based interface for interactive analysis

@@ -1,6 +1,5 @@
 import os
 import time
-import threading
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from vlm_spectra.web_app.model_manager import ModelManager
@@ -27,8 +26,72 @@ def model_status():
     return jsonify({
         'loading': model_manager.is_loading,
         'ready': model_manager.is_ready,
-        'error': model_manager.error_message
+        'error': model_manager.error_message,
+        'model_id': model_manager.current_model_id,
+        'model_name': model_manager.get_current_model_name(),
+        'model_label': model_manager.get_current_model_label(),
+        'pending_model_id': model_manager.pending_model_id,
+        'pending_model_label': model_manager.model_options.get(model_manager.pending_model_id, {}).get('label')
     })
+
+@app.route('/api/model/options')
+def model_options():
+    """List available model options"""
+    return jsonify(model_manager.get_model_options())
+
+@app.route('/api/model/select', methods=['POST'])
+def model_select():
+    """Select and load a model"""
+    data = request.get_json() or {}
+    model_id = data.get('model_id')
+    if not model_id:
+        return jsonify({'error': 'No model_id provided'}), 400
+
+    try:
+        status = model_manager.start_model_loading(model_id)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    if status == "unavailable":
+        return jsonify({'error': 'Model is not available in this environment'}), 400
+
+    return jsonify({
+        'status': status,
+        'model_id': model_id,
+        'model_label': model_manager.model_options[model_id]['label']
+    })
+
+@app.route('/api/model/patch-info')
+def get_patch_info():
+    """Get patch size information for the current model"""
+    patch_info = model_manager.get_patch_info()
+    return jsonify(patch_info)
+
+@app.route('/api/generate-square', methods=['POST'])
+def generate_square_image():
+    """Generate a square image from grid color configuration"""
+    if not model_manager.is_ready:
+        return jsonify({'error': 'Model not ready yet'}), 503
+
+    try:
+        data = request.get_json()
+        grid_colors = data.get('grid_colors')
+        grid_rows = data.get('grid_rows')
+        grid_cols = data.get('grid_cols')
+
+        if not grid_colors or not grid_rows or not grid_cols:
+            return jsonify({'error': 'Missing required fields: grid_colors, grid_rows, grid_cols'}), 400
+
+        result = model_manager.generate_square_image(
+            grid_colors=grid_colors,
+            grid_rows=grid_rows,
+            grid_cols=grid_cols
+        )
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
@@ -207,9 +270,7 @@ if __name__ == '__main__':
     print("Model loading in background...")
     
     # Start model loading in background thread
-    model_thread = threading.Thread(target=model_manager.load_model)
-    model_thread.daemon = True
-    model_thread.start()
+    model_manager.start_model_loading()
     
     print("Demo will be available at http://localhost:55556")
     app.run(host='0.0.0.0', port=55556, debug=False)
