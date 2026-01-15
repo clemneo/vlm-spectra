@@ -197,12 +197,15 @@ if Qwen3VLForConditionalGeneration is not None:
                     "position_embeddings are required for Qwen3-VL attention."
                 )
             attn_layer = self.lm_attn[layer]
-            _, attn_weights = attn_layer(
+            attn_outputs = attn_layer(
                 hidden_states=hidden_states,
                 position_embeddings=position_embeddings,
                 attention_mask=attention_mask,
                 output_attentions=True,
             )
+            # With cache disabled: (attn_output, attn_weights); 
+            # with cache enabled: (attn_output, attn_weights, past_key_value).
+            attn_weights = attn_outputs[1]
             return attn_weights
 
         def format_cache_item(self, hook_name: str, cache_item):
