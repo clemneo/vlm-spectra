@@ -11,6 +11,7 @@ from vlm_spectra.core.hook_manager import HookManager
 from vlm_spectra.models.registry import ModelRegistry
 from vlm_spectra.preprocessing.prompts import default_prompt_for_model
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
+from vlm_spectra.preprocessing.smolvlm_processor import SmolVLMProcessor
 from vlm_spectra.preprocessing.utils.vision_info import (
     IMAGE_FACTOR,
     MAX_PIXELS,
@@ -68,10 +69,13 @@ class HookedVLM:
         model, hf_processor, adapter = ModelRegistry.load(
             model_name, device=device, **kwargs
         )
-        image_factor = cls._resolve_image_factor(model)
-        processor = QwenProcessor(
-            hf_processor, default_prompt=default_prompt, image_factor=image_factor
-        )
+        if "SmolVLM" in model_name:
+            processor = SmolVLMProcessor(hf_processor, default_prompt=default_prompt)
+        else:
+            image_factor = cls._resolve_image_factor(model)
+            processor = QwenProcessor(
+                hf_processor, default_prompt=default_prompt, image_factor=image_factor
+            )
         instance = cls(model, processor, adapter, device=device)
         instance.model_name = model_name
         return instance
@@ -302,6 +306,18 @@ class HookedVLM:
                 f"Number of tasks ({len(tasks)}) must match number of images ({len(images)})"
             )
 
+        # Delegate to processor if it has batch support
+        if hasattr(self._processor, "prepare_inputs_batch"):
+            return self._processor.prepare_inputs_batch(
+                tasks=tasks,
+                images=images,
+                append_text=append_text,
+                assistant_prefill=assistant_prefill,
+                return_text=return_text,
+            )
+
+        # TODO: Move this Qwen-specific logic to QwenProcessor.prepare_inputs_batch
+        # so that all batch processing is handled by the processor, not here.
         assistant_prefill = "" if assistant_prefill is None else assistant_prefill
 
         batch_messages = []

@@ -10,7 +10,7 @@ These tests validate that a model implementation correctly produces:
 import torch
 import pytest
 
-from conftest import generate_random_image
+from conftest import generate_checkered_image, generate_random_image
 
 
 class TestForward:
@@ -212,6 +212,30 @@ class TestGenerate:
             outputs.sequences[0], skip_special_tokens=True
         )
         assert prefill in generated_text
+
+
+class TestDescribeImage:
+    """Test basic image description capability."""
+
+    def test_describe_image_produces_text(self, model):
+        """Model should generate non-empty text when asked to describe an image."""
+        # Use a checkered pattern - deterministic and recognizable
+        image = generate_checkered_image(width=224, height=224)
+        inputs = model.prepare_messages("Describe this image.", image)
+        outputs = model.generate(inputs, max_new_tokens=50, do_sample=False)
+
+        tokenizer = model.processor.tokenizer
+        generated_text = tokenizer.decode(
+            outputs.sequences[0], skip_special_tokens=True
+        )
+
+        print(f"\n--- Generated text ---\n{generated_text}\n---")
+
+        # Should produce some text beyond the prompt
+        assert len(generated_text) > 0, "Generated empty text"
+        # Should have generated at least some new tokens
+        input_len = inputs["input_ids"].shape[1]
+        assert outputs.sequences.shape[1] > input_len, "No new tokens generated"
 
 
 class TestForwardGenerateConsistency:

@@ -22,3 +22,6 @@ src/vlm_spectra/web_app/static/images/
 src/vlm_spectra/web_app/static/images/
 src/vlm_spectra/web_app/static/uploads/
 src/vlm_spectra/web_app/static/uploads/
+
+# MacOS
+.DS_Store
