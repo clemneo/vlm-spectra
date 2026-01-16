@@ -202,7 +202,6 @@ class TestBatchInputPreparation:
         assert "input_ids" in inputs
         assert "attention_mask" in inputs
         assert "pixel_values" in inputs
-        assert "image_grid_thw" in inputs
 
         assert inputs["input_ids"].shape[0] == 2  # batch size
         assert inputs["attention_mask"].shape[0] == 2

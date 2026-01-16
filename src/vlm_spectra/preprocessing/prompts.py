@@ -125,4 +125,6 @@ def default_prompt_for_model(model_name: str) -> DefaultPrompt:
         return UI_TARS_PROMPT
     if model_name == "Qwen/Qwen3-VL-8B-Instruct":
         return build_qwen3_vl_prompt
+    if "SmolVLM" in model_name:
+        return None
     return None

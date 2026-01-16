@@ -18,6 +18,9 @@ MODEL_NAMES = ModelRegistry.list_supported_models()
 MODEL_ALIASES = {
     "uitars1.5-7b": "ByteDance-Seed/UI-TARS-1.5-7B",
     "qwen3vl-8b": "Qwen/Qwen3-VL-8B-Instruct",
+    "smolvlm-256m": "HuggingFaceTB/SmolVLM-256M-Instruct",
+    "smolvlm-500m": "HuggingFaceTB/SmolVLM-500M-Instruct",
+    "smolvlm-2b": "HuggingFaceTB/SmolVLM-Instruct",
 }
 
 
