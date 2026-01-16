@@ -41,3 +41,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
+markers = [
+    "manual: marks tests requiring human verification (deselect with '-m \"not manual\"')",
+    "requires_capability(name): marks tests requiring specific model capability",
+    "slow: marks slow tests",
+]
+addopts = "-m 'not manual'"

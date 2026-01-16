@@ -1,87 +1,13 @@
-"""Shared test fixtures and utilities for VLM Spectra test suite."""
+"""Shared test fixtures and utilities for VLM Spectra test suite.
 
-import gc
+This file contains only utilities shared across test tiers.
+Model fixtures are defined in their respective test directories:
+- integration/conftest.py - tiny_model fixture
+- acceptance/conftest.py - full model fixture
+"""
 
-import pytest
 import numpy as np
-import torch
 from PIL import Image
-
-from vlm_spectra import HookedVLM
-from vlm_spectra.models.registry import ModelRegistry
-
-
-# Get available models from registry (triggers lazy discovery)
-# Only models whose dependencies are available will be listed
-MODEL_NAMES = ModelRegistry.list_supported_models()
-
-MODEL_ALIASES = {
-    "uitars1.5-7b": "ByteDance-Seed/UI-TARS-1.5-7B",
-    "qwen3vl-8b": "Qwen/Qwen3-VL-8B-Instruct",
-    "smolvlm-256m": "HuggingFaceTB/SmolVLM-256M-Instruct",
-    "smolvlm-500m": "HuggingFaceTB/SmolVLM-500M-Instruct",
-    "smolvlm-2b": "HuggingFaceTB/SmolVLM-Instruct",
-}
-
-
-def pytest_addoption(parser):
-    parser.addoption(
-        "--model",
-        action="store",
-        default=None,
-        help="Model name or alias to run tests against",
-    )
-
-
-@pytest.fixture(autouse=True)
-def cleanup_gpu_memory():
-    """Automatically clean up GPU memory after each test."""
-    yield
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
-@pytest.fixture(scope="session", params=MODEL_NAMES)
-def model(request):
-    """Load a HookedVLM model. Session-scoped so all tests for one model
-    run before moving to the next, preventing OOM from multiple models.
-
-    Explicitly cleans up GPU memory after each model to prevent OOM
-    when testing multiple models sequentially.
-    """
-    selected = request.config.getoption("--model")
-    if selected:
-        selected = MODEL_ALIASES.get(selected, selected)
-        if request.param != selected:
-            pytest.skip(f"Skipping {request.param}; --model={selected}")
-
-    loaded_model = HookedVLM.from_pretrained(request.param)
-    yield loaded_model
-
-    # Cleanup: explicitly delete model and free GPU memory
-    del loaded_model
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
-@pytest.fixture
-def random_image():
-    """Generate a random RGB image for testing."""
-    return generate_random_image()
-
-
-@pytest.fixture
-def checkered_image():
-    """Generate a checkered pattern image for deterministic testing."""
-    return generate_checkered_image()
-
-
-@pytest.fixture
-def small_image():
-    """Generate a small image for memory-efficient gradient tests."""
-    return generate_random_image(width=28, height=28)
 
 
 def generate_random_image(width=56, height=56, num_channels=3, seed=None):
