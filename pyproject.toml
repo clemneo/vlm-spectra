@@ -46,4 +46,3 @@ markers = [
     "requires_capability(name): marks tests requiring specific model capability",
     "slow: marks slow tests",
 ]
-addopts = "-m 'not manual'"
