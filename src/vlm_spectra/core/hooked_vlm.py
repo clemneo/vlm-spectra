@@ -183,11 +183,32 @@ class HookedVLM:
             self.cache = cache._data
 
     @contextmanager
-    def run_with_hooks(self, hooks):
+    def run_with_hooks(self, hooks: List[Tuple[str, Callable]]):
         """Context manager for patching activations.
 
-        Hooks should have a `hook_point` attribute specifying where to attach
-        and a `layer` attribute specifying which layer to hook.
+        Args:
+            hooks: List of (hook_name, hook_fn) tuples where:
+                - hook_name: Full hook name like 'lm.blocks.5.hook_resid_post'
+                  or with wildcard like 'lm.blocks.*.hook_resid_post'
+                - hook_fn: Callable with signature (module, args, kwargs, output) -> output | None
+                  Return modified output, or None to keep original.
+
+        Valid hook points (post-hooks only, no virtual hooks):
+            - hook_resid_post: layer output
+            - attn.hook_q, attn.hook_k, attn.hook_v: QKV projections
+            - attn.hook_out: attention output
+            - mlp.hook_pre, mlp.hook_pre_linear: gate/up projections
+            - mlp.hook_out: MLP output
+
+        Example:
+            def scale_hook(module, args, kwargs, output):
+                return output * 0.5
+
+            with model.run_with_hooks([('lm.blocks.5.hook_resid_post', scale_hook)]):
+                model.forward(inputs)
+
+        Yields:
+            None
         """
         self._hook_manager.register_patch_hooks(hooks)
         try:

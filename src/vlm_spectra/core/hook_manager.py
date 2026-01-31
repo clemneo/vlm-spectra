@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import torch
 import torch.nn as nn
 from torch.utils.hooks import RemovableHandle
 
 from vlm_spectra.core.activation_cache import ActivationCache
 from vlm_spectra.core.hook_points import HookPoint
+from vlm_spectra.core.patch_hooks import HookFn, validate_patch_hook_type
 
 from vlm_spectra.models.base_adapter import ModelAdapter
-
-if TYPE_CHECKING:
-    from vlm_spectra.hooks.base import Hook
 
 
 class HookManager:
@@ -98,54 +97,58 @@ class HookManager:
 
         self._cache_handles.append(handle)
 
-    def register_patch_hooks(self, hooks: List["Hook"]) -> None:
-        """Register hooks that modify activations."""
+    def register_patch_hooks(
+        self,
+        hooks: List[Tuple[str, Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]]]],
+    ) -> None:
+        """Register hooks that modify activations using tuple-based API.
+
+        Args:
+            hooks: List of (hook_name, hook_fn) tuples where:
+                - hook_name: Full hook name like 'lm.blocks.5.hook_resid_post'
+                  or with wildcard like 'lm.blocks.*.hook_resid_post'
+                - hook_fn: Callable with signature (module, args, kwargs, output) -> output | None
+                  Return modified output, or None to keep original.
+
+        Raises:
+            ValueError: If hook_type is a pre-hook or virtual hook (only post-hooks
+                that capture actual module outputs can be used for patching)
+
+        Example:
+            def zero_hook(module, args, kwargs, output):
+                return torch.zeros_like(output)
+
+            manager.register_patch_hooks([
+                ('lm.blocks.5.hook_resid_post', zero_hook),
+                ('lm.blocks.*.mlp.hook_out', ScaleActivation(0.5)),
+            ])
+        """
         if self._patch_handles:
             self.remove_patch_hooks()
 
-        for hook in hooks:
-            hook_point = getattr(hook, "hook_point", "lm.blocks.0.hook_resid_post")
-            layer = hook.layer
+        for hook_name, hook_fn in hooks:
+            # Expand wildcards
+            expanded_names = HookPoint.expand(hook_name, self._adapter.lm_num_layers)
 
-            # Handle both old and new naming conventions during transition
-            if not hook_point.startswith("lm.blocks."):
-                # Legacy hook point - convert to new format
-                legacy_to_new = {
-                    "lm.layer.pre": "hook_resid_pre",
-                    "lm.layer.post": "hook_resid_post",
-                    "lm.attn.out": "attn.hook_out",
-                    "lm.attn.head": "attn.hook_z",
-                    "lm.attn.pre": "attn.hook_in",
-                    "lm.attn.pattern": "attn.hook_pattern",
-                    "lm.mlp.out": "mlp.hook_out",
-                }
-                if hook_point in legacy_to_new:
-                    hook_type = legacy_to_new[hook_point]
-                    hook_point = HookPoint.format(hook_type, layer)
-                else:
-                    raise ValueError(f"Unknown legacy hook point: {hook_point}")
+            for full_name in expanded_names:
+                hook_type, layer = HookPoint.parse(full_name)
 
-            hook_type, parsed_layer = HookPoint.parse(hook_point)
-            if parsed_layer != layer and parsed_layer != "*":
-                # Layer from hook_point takes precedence
-                layer = parsed_layer
+                # Validate hook type can be used for patching
+                validate_patch_hook_type(hook_type)
 
-            # Inject num_heads for hooks that need it
-            if hasattr(hook, "set_num_heads"):
-                hook.set_num_heads(self._adapter.lm_num_heads)
+                # Get the module
+                module_getter = HookPoint.get_module_getter(hook_type)
+                getter_fn = getattr(self._adapter, module_getter, None)
+                if getter_fn is None:
+                    raise NotImplementedError(
+                        f"Adapter does not implement {module_getter} for hook {hook_type}"
+                    )
+                module = getter_fn(layer)
 
-            module_getter = HookPoint.get_module_getter(hook_type)
-            getter_fn = getattr(self._adapter, module_getter)
-            module = getter_fn(layer)
-            is_pre = HookPoint.is_pre_hook(hook_type)
-
-            if is_pre:
-                handle = module.register_forward_pre_hook(
-                    self._wrap_pre_hook(hook), with_kwargs=True
-                )
-            else:
-                handle = module.register_forward_hook(hook, with_kwargs=True)
-            self._patch_handles.append(handle)
+                # Wrap hook_fn to handle tuple outputs from modules
+                wrapped_fn = self._wrap_patch_hook(hook_fn)
+                handle = module.register_forward_hook(wrapped_fn, with_kwargs=True)
+                self._patch_handles.append(handle)
 
     def finalize_cache(self, cache: ActivationCache, names: List[str]) -> None:
         """Compute derived cache entries that require extra inputs."""
@@ -280,16 +283,31 @@ class HookManager:
 
         return hook
 
-    def _wrap_pre_hook(self, hook: "Hook"):
-        """Wrap a Hook object for pre-hook signature."""
-        def wrapper(module, args, kwargs):
-            result = hook(module, args, kwargs, None)
-            if result is not None:
-                if isinstance(result, tuple) and len(result) == 2:
-                    new_args, new_kwargs = result
-                    if isinstance(new_args, tuple) and isinstance(new_kwargs, dict):
-                        return new_args, new_kwargs
-                return result
-            return None
+    def _wrap_patch_hook(
+        self,
+        hook_fn: Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]],
+    ):
+        """Wrap a patch hook function to handle tuple outputs from modules.
+
+        Some modules return tuples (output, cache_state, ...). This wrapper
+        extracts the first element, passes it to hook_fn, and reconstructs
+        the tuple if needed.
+        """
+        def wrapper(module: nn.Module, args: tuple, kwargs: dict, output: Union[torch.Tensor, tuple]):
+            # Handle tuple outputs (common in transformer layers)
+            is_tuple = isinstance(output, tuple)
+            tensor_output = output[0] if is_tuple else output
+
+            # Call the hook function
+            result = hook_fn(module, args, kwargs, tensor_output)
+
+            if result is None:
+                # Hook didn't modify anything
+                return output
+
+            # Reconstruct tuple if original was tuple
+            if is_tuple:
+                return (result,) + output[1:]
+            return result
 
         return wrapper

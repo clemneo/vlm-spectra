@@ -15,7 +15,9 @@ def tiny_model():
 
     Module-scoped to avoid reloading for each test.
     """
-    return HookedVLM.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
+    model = HookedVLM.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
+    model.model.eval()
+    return model
 
 
 @pytest.fixture(scope="module")
