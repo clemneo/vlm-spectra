@@ -81,6 +81,7 @@ def cache_all_hooks(tiny_model):
         "lm.blocks.*.attn.hook_v",
         "lm.blocks.*.attn.hook_z",
         "lm.blocks.*.attn.hook_out",
+        "lm.blocks.*.attn.hook_pattern",
         "lm.blocks.*.mlp.hook_in",
         "lm.blocks.*.mlp.hook_out",
     ]
@@ -165,6 +166,17 @@ class TestCacheHookShapes:
     def test_attn_hook_out_stacked_shape(self, cache_all_hooks):
         c = cache_all_hooks
         assert c["cache"].stack("lm.blocks.*.attn.hook_out").shape == (c["num_layers"], 1, c["seq_len"], c["hidden_dim"])
+
+    def test_attn_hook_pattern_sums_to_one(self, cache_all_hooks):
+        c = cache_all_hooks
+        patterns = c["cache"].stack("lm.blocks.*.attn.hook_pattern")
+        sums = patterns.float().sum(dim=-1)
+        assert torch.allclose(
+            sums,
+            torch.ones_like(sums),
+            atol=5e-3,
+            rtol=5e-3,
+        )
 
     def test_mlp_hook_in_shape(self, cache_all_hooks):
         c = cache_all_hooks
