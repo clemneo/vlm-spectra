@@ -11,7 +11,7 @@ class HookConfig:
 
     module_getter: str
     is_pre: bool = False
-    is_computed: bool = False
+    is_virtual: bool = False
 
 
 class HookPoint:
@@ -34,11 +34,11 @@ class HookPoint:
         "attn.hook_q": HookConfig("get_lm_q_proj"),
         "attn.hook_k": HookConfig("get_lm_k_proj"),
         "attn.hook_v": HookConfig("get_lm_v_proj"),
-        "attn.hook_scores": HookConfig("get_lm_attn", is_computed=True),
-        "attn.hook_pattern": HookConfig("get_lm_attn", is_computed=True),
+        "attn.hook_scores": HookConfig("get_lm_attn", is_virtual=True),
+        "attn.hook_pattern": HookConfig("get_lm_attn", is_virtual=True),
         "attn.hook_z": HookConfig("get_lm_o_proj", is_pre=True),
         "attn.hook_out": HookConfig("get_lm_o_proj"),
-        "attn.hook_head_out": HookConfig("get_lm_o_proj", is_computed=True),
+        "attn.hook_head_out": HookConfig("get_lm_o_proj", is_virtual=True),
         # MLP
         "mlp.hook_in": HookConfig("get_lm_mlp", is_pre=True),
         "mlp.hook_pre": HookConfig("get_lm_gate_proj"),
@@ -130,21 +130,21 @@ class HookPoint:
             hook_type: Hook type like 'hook_resid_post'
 
         Returns:
-            HookConfig with module_getter, is_pre, and is_computed fields
+            HookConfig with module_getter, is_pre, and is_virtual fields
         """
         if hook_type not in cls.HOOK_CONFIGS:
             raise ValueError(f"Unknown hook type: {hook_type}")
         return cls.HOOK_CONFIGS[hook_type]
 
     @classmethod
-    def is_computed(cls, hook_type: str) -> bool:
+    def is_virtual(cls, hook_type: str) -> bool:
         """Check if hook requires computation in finalize.
 
         Computed hooks are not directly captured from forward passes but
         are derived from other captured data (e.g., attention patterns
         require computing from Q, K, V).
         """
-        return cls.get_config(hook_type).is_computed
+        return cls.get_config(hook_type).is_virtual
 
     @classmethod
     def is_pre_hook(cls, hook_type: str) -> bool:

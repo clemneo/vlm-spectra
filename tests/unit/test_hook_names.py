@@ -95,13 +95,13 @@ class TestHookPointConfig:
         """hook_resid_post should be a post-hook."""
         assert HookPoint.is_pre_hook("hook_resid_post") is False
 
-    def test_is_computed_pattern(self):
+    def test_is_virtual_pattern(self):
         """attn.hook_pattern should be computed."""
-        assert HookPoint.is_computed("attn.hook_pattern") is True
+        assert HookPoint.is_virtual("attn.hook_pattern") is True
 
-    def test_is_computed_resid_post(self):
+    def test_is_virtual_resid_post(self):
         """hook_resid_post should not be computed."""
-        assert HookPoint.is_computed("hook_resid_post") is False
+        assert HookPoint.is_virtual("hook_resid_post") is False
 
     def test_all_hook_types_have_config(self):
         """All hook types in HOOK_CONFIGS should have valid config."""
@@ -109,4 +109,4 @@ class TestHookPointConfig:
             config = HookPoint.get_config(hook_type)
             assert isinstance(config.module_getter, str)
             assert isinstance(config.is_pre, bool)
-            assert isinstance(config.is_computed, bool)
+            assert isinstance(config.is_virtual, bool)

@@ -59,7 +59,7 @@ class HookManager:
         hook_type, layer = HookPoint.parse(name)
         module_getter = HookPoint.get_module_getter(hook_type)
         is_pre = HookPoint.is_pre_hook(hook_type)
-        is_computed = HookPoint.is_computed(hook_type)
+        is_virtual = HookPoint.is_virtual(hook_type)
 
         # Get module from adapter
         getter_fn = getattr(self._adapter, module_getter, None)
@@ -70,7 +70,7 @@ class HookManager:
         module = getter_fn(layer)
 
         # Computed hooks need special handling
-        if is_computed:
+        if is_virtual:
             if hook_type == "attn.hook_pattern":
                 # Capture inputs to attention for pattern computation
                 hook_fn = self._save_pattern_inputs(name)
