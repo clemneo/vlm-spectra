@@ -82,7 +82,9 @@ class HookManager:
             elif hook_type == "hook_resid_mid":
                 raise NotImplementedError("hook_resid_mid is not yet implemented")
             elif hook_type == "attn.hook_scores":
-                raise NotImplementedError("attn.hook_scores is not yet implemented")
+                # Reuse same capture as attn.hook_pattern
+                hook_fn = self._save_pattern_inputs(name)
+                handle = module.register_forward_pre_hook(hook_fn, with_kwargs=True)
             else:
                 raise NotImplementedError(f"Computed hook {hook_type} is not yet implemented")
         elif is_pre:
@@ -173,6 +175,23 @@ class HookManager:
                             hook_data, layer
                         )
                     cache[name] = attn_patterns
+
+            elif hook_type == "attn.hook_scores":
+                if name in self._input_cache:
+                    hook_data = self._input_cache[name]
+                    if isinstance(hook_data, dict):
+                        attn_scores = self._adapter.compute_attention_scores(
+                            hidden_states=hook_data["hidden_states"],
+                            layer=layer,
+                            attention_mask=hook_data.get("attention_mask"),
+                            position_ids=hook_data.get("position_ids"),
+                            position_embeddings=hook_data.get("position_embeddings"),
+                        )
+                    else:
+                        attn_scores = self._adapter.compute_attention_scores(
+                            hook_data, layer
+                        )
+                    cache[name] = attn_scores
 
     def remove_all_hooks(self) -> None:
         """Remove all registered hooks."""

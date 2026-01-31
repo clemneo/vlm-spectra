@@ -82,8 +82,13 @@ def cache_all_hooks(tiny_model):
         "lm.blocks.*.attn.hook_z",
         "lm.blocks.*.attn.hook_out",
         "lm.blocks.*.attn.hook_pattern",
+        "lm.blocks.*.attn.hook_scores",
+        "lm.blocks.*.attn.hook_head_out",
         "lm.blocks.*.mlp.hook_in",
         "lm.blocks.*.mlp.hook_out",
+        "lm.blocks.*.mlp.hook_pre",
+        "lm.blocks.*.mlp.hook_pre_linear",
+        "lm.blocks.*.mlp.hook_post",
     ]
 
     with tiny_model.run_with_cache(hooks) as cache:
@@ -97,6 +102,7 @@ def cache_all_hooks(tiny_model):
         "num_heads": tiny_model.adapter.lm_num_heads,
         "num_kv_heads": tiny_model.adapter.lm_num_kv_heads,
         "head_dim": tiny_model.adapter.lm_head_dim,
+        "mlp_dim": tiny_model.adapter.lm_mlp_dim,
     }
 
 
@@ -178,6 +184,24 @@ class TestCacheHookShapes:
             rtol=5e-3,
         )
 
+    def test_attn_hook_scores_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        # (batch, num_heads, seq_len, seq_len)
+        assert c["cache"]["lm.blocks.0.attn.hook_scores"].shape == (1, c["num_heads"], c["seq_len"], c["seq_len"])
+
+    def test_attn_hook_scores_stacked_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"].stack("lm.blocks.*.attn.hook_scores").shape == (c["num_layers"], 1, c["num_heads"], c["seq_len"], c["seq_len"])
+
+    def test_attn_hook_head_out_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        # (batch, seq_len, num_heads, hidden_dim)
+        assert c["cache"]["lm.blocks.0.attn.hook_head_out"].shape == (1, c["seq_len"], c["num_heads"], c["hidden_dim"])
+
+    def test_attn_hook_head_out_stacked_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"].stack("lm.blocks.*.attn.hook_head_out").shape == (c["num_layers"], 1, c["seq_len"], c["num_heads"], c["hidden_dim"])
+
     def test_mlp_hook_in_shape(self, cache_all_hooks):
         c = cache_all_hooks
         assert c["cache"]["lm.blocks.0.mlp.hook_in"].shape == (1, c["seq_len"], c["hidden_dim"])
@@ -193,6 +217,30 @@ class TestCacheHookShapes:
     def test_mlp_hook_out_stacked_shape(self, cache_all_hooks):
         c = cache_all_hooks
         assert c["cache"].stack("lm.blocks.*.mlp.hook_out").shape == (c["num_layers"], 1, c["seq_len"], c["hidden_dim"])
+
+    def test_mlp_hook_pre_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"]["lm.blocks.0.mlp.hook_pre"].shape == (1, c["seq_len"], c["mlp_dim"])
+
+    def test_mlp_hook_pre_stacked_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"].stack("lm.blocks.*.mlp.hook_pre").shape == (c["num_layers"], 1, c["seq_len"], c["mlp_dim"])
+
+    def test_mlp_hook_pre_linear_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"]["lm.blocks.0.mlp.hook_pre_linear"].shape == (1, c["seq_len"], c["mlp_dim"])
+
+    def test_mlp_hook_pre_linear_stacked_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"].stack("lm.blocks.*.mlp.hook_pre_linear").shape == (c["num_layers"], 1, c["seq_len"], c["mlp_dim"])
+
+    def test_mlp_hook_post_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"]["lm.blocks.0.mlp.hook_post"].shape == (1, c["seq_len"], c["mlp_dim"])
+
+    def test_mlp_hook_post_stacked_shape(self, cache_all_hooks):
+        c = cache_all_hooks
+        assert c["cache"].stack("lm.blocks.*.mlp.hook_post").shape == (c["num_layers"], 1, c["seq_len"], c["mlp_dim"])
 
 
 class TestCacheNonInvasiveness:

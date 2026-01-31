@@ -15,20 +15,20 @@ class HookPoint:
         lm.blocks.*.attn.hook_pattern  (wildcard for all layers)
     """
 
-    # hook_type -> (module_getter, is_pre_hook, is_computed)
+    # hook_type -> (module_getter, is_pre_hook, is_virtual)
     HOOK_CONFIGS = {
         "hook_resid_pre": ("get_lm_layer", True, False),
         "hook_resid_post": ("get_lm_layer", False, False),
-        "hook_resid_mid": ("get_lm_layer", False, True),  # computed
+        "hook_resid_mid": ("get_lm_layer", False, True),  # virtual
         "attn.hook_in": ("get_lm_attn", True, False),
         "attn.hook_q": ("get_lm_q_proj", False, False),
         "attn.hook_k": ("get_lm_k_proj", False, False),
         "attn.hook_v": ("get_lm_v_proj", False, False),
-        "attn.hook_scores": ("get_lm_attn", False, True),  # computed
-        "attn.hook_pattern": ("get_lm_attn", False, True),  # computed
+        "attn.hook_scores": ("get_lm_attn", False, True),  # virtual
+        "attn.hook_pattern": ("get_lm_attn", False, True),  # virtual
         "attn.hook_z": ("get_lm_o_proj", True, False),
         "attn.hook_out": ("get_lm_o_proj", False, False),
-        "attn.hook_head_out": ("get_lm_o_proj", False, True),  # computed (per-head)
+        "attn.hook_head_out": ("get_lm_o_proj", False, True),  # virtual (per-head)
         "mlp.hook_in": ("get_lm_mlp", True, False),
         "mlp.hook_pre": ("get_lm_gate_proj", False, False),
         "mlp.hook_pre_linear": ("get_lm_up_proj", False, False),
