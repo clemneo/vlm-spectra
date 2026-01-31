@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Union
+
+
+@dataclass(frozen=True)
+class HookConfig:
+    """Configuration for a hook point."""
+
+    module_getter: str
+    is_pre: bool = False
+    is_computed: bool = False
 
 
 class HookPoint:
@@ -15,25 +25,26 @@ class HookPoint:
         lm.blocks.*.attn.hook_pattern  (wildcard for all layers)
     """
 
-    # hook_type -> (module_getter, is_pre_hook, is_virtual)
-    HOOK_CONFIGS = {
-        "hook_resid_pre": ("get_lm_layer", True, False),
-        "hook_resid_post": ("get_lm_layer", False, False),
-        "hook_resid_mid": ("get_lm_layer", False, True),  # virtual
-        "attn.hook_in": ("get_lm_attn", True, False),
-        "attn.hook_q": ("get_lm_q_proj", False, False),
-        "attn.hook_k": ("get_lm_k_proj", False, False),
-        "attn.hook_v": ("get_lm_v_proj", False, False),
-        "attn.hook_scores": ("get_lm_attn", False, True),  # virtual
-        "attn.hook_pattern": ("get_lm_attn", False, True),  # virtual
-        "attn.hook_z": ("get_lm_o_proj", True, False),
-        "attn.hook_out": ("get_lm_o_proj", False, False),
-        "attn.hook_head_out": ("get_lm_o_proj", False, True),  # virtual (per-head)
-        "mlp.hook_in": ("get_lm_mlp", True, False),
-        "mlp.hook_pre": ("get_lm_gate_proj", False, False),
-        "mlp.hook_pre_linear": ("get_lm_up_proj", False, False),
-        "mlp.hook_post": ("get_lm_down_proj", True, False),
-        "mlp.hook_out": ("get_lm_mlp", False, False),
+    HOOK_CONFIGS: dict[str, HookConfig] = {
+        # Residual stream
+        "hook_resid_pre": HookConfig("get_lm_layer", is_pre=True),
+        "hook_resid_post": HookConfig("get_lm_layer"),
+        # Attention
+        "attn.hook_in": HookConfig("get_lm_attn", is_pre=True),
+        "attn.hook_q": HookConfig("get_lm_q_proj"),
+        "attn.hook_k": HookConfig("get_lm_k_proj"),
+        "attn.hook_v": HookConfig("get_lm_v_proj"),
+        "attn.hook_scores": HookConfig("get_lm_attn", is_computed=True),
+        "attn.hook_pattern": HookConfig("get_lm_attn", is_computed=True),
+        "attn.hook_z": HookConfig("get_lm_o_proj", is_pre=True),
+        "attn.hook_out": HookConfig("get_lm_o_proj"),
+        "attn.hook_head_out": HookConfig("get_lm_o_proj", is_computed=True),
+        # MLP
+        "mlp.hook_in": HookConfig("get_lm_mlp", is_pre=True),
+        "mlp.hook_pre": HookConfig("get_lm_gate_proj"),
+        "mlp.hook_pre_linear": HookConfig("get_lm_up_proj"),
+        "mlp.hook_post": HookConfig("get_lm_down_proj", is_pre=True),
+        "mlp.hook_out": HookConfig("get_lm_mlp"),
     }
 
     # Pattern: lm.blocks.{layer}.{hook_type}
@@ -112,14 +123,14 @@ class HookPoint:
         return f"lm.blocks.{layer}.{hook_type}"
 
     @classmethod
-    def get_config(cls, hook_type: str) -> tuple[str, bool, bool]:
+    def get_config(cls, hook_type: str) -> HookConfig:
         """Get configuration for a hook type.
 
         Args:
             hook_type: Hook type like 'hook_resid_post'
 
         Returns:
-            Tuple of (module_getter, is_pre_hook, is_computed)
+            HookConfig with module_getter, is_pre, and is_computed fields
         """
         if hook_type not in cls.HOOK_CONFIGS:
             raise ValueError(f"Unknown hook type: {hook_type}")
@@ -133,20 +144,17 @@ class HookPoint:
         are derived from other captured data (e.g., attention patterns
         require computing from Q, K, V).
         """
-        _, _, is_computed = cls.get_config(hook_type)
-        return is_computed
+        return cls.get_config(hook_type).is_computed
 
     @classmethod
     def is_pre_hook(cls, hook_type: str) -> bool:
         """Check if hook should be registered as forward_pre_hook."""
-        _, is_pre, _ = cls.get_config(hook_type)
-        return is_pre
+        return cls.get_config(hook_type).is_pre
 
     @classmethod
     def get_module_getter(cls, hook_type: str) -> str:
         """Get the adapter method name for retrieving the module."""
-        getter, _, _ = cls.get_config(hook_type)
-        return getter
+        return cls.get_config(hook_type).module_getter
 
     @classmethod
     def matches_pattern(cls, name: str, pattern: str) -> bool:

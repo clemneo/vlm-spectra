@@ -106,7 +106,7 @@ class TestHookPointConfig:
     def test_all_hook_types_have_config(self):
         """All hook types in HOOK_CONFIGS should have valid config."""
         for hook_type in HookPoint.HOOK_CONFIGS:
-            getter, is_pre, is_computed = HookPoint.get_config(hook_type)
-            assert isinstance(getter, str)
-            assert isinstance(is_pre, bool)
-            assert isinstance(is_computed, bool)
+            config = HookPoint.get_config(hook_type)
+            assert isinstance(config.module_getter, str)
+            assert isinstance(config.is_pre, bool)
+            assert isinstance(config.is_computed, bool)
