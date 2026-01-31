@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from vlm_spectra.core.activation_cache import ActivationCache
 from vlm_spectra.core.hook_manager import HookManager
+from vlm_spectra.core.hook_points import HookPoint
 from vlm_spectra.models.registry import ModelRegistry
 from vlm_spectra.preprocessing.prompts import default_prompt_for_model
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
@@ -151,15 +152,34 @@ class HookedVLM:
 
     @contextmanager
     def run_with_cache(self, cache_names: List[str]):
+        """Context manager for capturing activations.
+
+        Args:
+            cache_names: List of hook names to capture. Supports wildcards.
+                Examples:
+                    ["lm.blocks.*.hook_resid_post"]  # all layers
+                    ["lm.blocks.5.hook_resid_post"]  # specific layer
+                    ["lm.blocks.*.attn.hook_pattern"]  # attention patterns
+
+        Yields:
+            ActivationCache with captured activations accessible by string keys.
+
+        Example:
+            with model.run_with_cache(["lm.blocks.*.hook_resid_post"]) as cache:
+                model.forward(inputs)
+            residual = cache["lm.blocks.5.hook_resid_post"]
+            stacked = cache.stack("lm.blocks.*.hook_resid_post")
+        """
         cache = ActivationCache()
         self._hook_manager.register_cache_hooks(cache, cache_names)
         try:
             yield cache
         finally:
-            self._hook_manager.remove_cache_hooks()
             self._hook_manager.finalize_cache(cache, cache_names)
+            self._hook_manager.remove_cache_hooks()
             for key in list(cache.keys()):
-                cache[key] = self.adapter.format_cache_item(key[0], cache[key])
+                hook_type, _ = HookPoint.parse(key)
+                cache[key] = self.adapter.format_cache_item(hook_type, cache[key])
             self.cache = cache._data
 
     @contextmanager

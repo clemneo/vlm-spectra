@@ -53,6 +53,38 @@ class ModelAdapter(ABC):
     def get_lm_mlp(self, layer_idx: int) -> nn.Module:
         """Return the MLP module at index."""
 
+    # QKV projection getters (required for attn.hook_q/k/v)
+    @abstractmethod
+    def get_lm_q_proj(self, layer_idx: int) -> nn.Module:
+        """Return the query projection module at index."""
+
+    @abstractmethod
+    def get_lm_k_proj(self, layer_idx: int) -> nn.Module:
+        """Return the key projection module at index."""
+
+    @abstractmethod
+    def get_lm_v_proj(self, layer_idx: int) -> nn.Module:
+        """Return the value projection module at index."""
+
+    # MLP internal getters (optional, for mlp.hook_pre/pre_linear/post)
+    def get_lm_gate_proj(self, layer_idx: int) -> nn.Module:
+        """Return the MLP gate projection (for gated MLPs like SwiGLU)."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_lm_gate_proj"
+        )
+
+    def get_lm_up_proj(self, layer_idx: int) -> nn.Module:
+        """Return the MLP up projection."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_lm_up_proj"
+        )
+
+    def get_lm_down_proj(self, layer_idx: int) -> nn.Module:
+        """Return the MLP down projection."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_lm_down_proj"
+        )
+
     def get_lm_norm(self) -> nn.Module:
         """Return the final normalization layer if available."""
         raise NotImplementedError
@@ -78,9 +110,14 @@ class ModelAdapter(ABC):
     ) -> torch.Tensor:
         """Compute attention patterns for a given layer."""
 
-    def format_cache_item(self, hook_name: str, cache_item):
-        """Format a single cache item to a tensor."""
-        _ = hook_name
+    def format_cache_item(self, hook_type: str, cache_item):
+        """Format a single cache item to a tensor.
+
+        Args:
+            hook_type: Hook type like 'hook_resid_post' or 'attn.hook_pattern'
+            cache_item: The cached tensor or tuple
+        """
+        _ = hook_type
         if isinstance(cache_item, torch.Tensor):
             return cache_item.detach()
         return cache_item
