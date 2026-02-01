@@ -76,7 +76,11 @@ class ActivationCache:
             return layer if isinstance(layer, int) else 0
 
         sorted_keys = sorted(matching_keys, key=get_layer)
-        return torch.stack([self._data[k] for k in sorted_keys])
+        tensors = [self._data[k] for k in sorted_keys]
+        # Move all tensors to the same device (use first tensor's device)
+        target_device = tensors[0].device
+        tensors = [t.to(target_device) for t in tensors]
+        return torch.stack(tensors)
 
     def _match_pattern(self, pattern: str) -> List[str]:
         """Find all keys matching a pattern with wildcards."""
