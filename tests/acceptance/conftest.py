@@ -72,6 +72,25 @@ def pytest_configure(config):
     )
 
 
+def pytest_report_header(config):
+    """Surface the model list in the pytest session header."""
+    try:
+        models = get_models_to_test(config)
+    except Exception as exc:  # pragma: no cover - defensive guard for CLI parsing
+        return f"VLM models under test: error determining models ({exc})"
+
+    if not models:
+        return "VLM models under test: none"
+
+    reason = "default"
+    if config.getoption("--all-models"):
+        reason = "all registered"
+    elif config.getoption("--model"):
+        reason = "requested"
+
+    return f"VLM models under test ({reason}): {', '.join(models)}"
+
+
 def pytest_collection_modifyitems(config, items):
     """Handle manual tests."""
     if not config.getoption("--run-manual"):
