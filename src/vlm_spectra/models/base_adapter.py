@@ -131,3 +131,9 @@ class ModelAdapter(ABC):
     @abstractmethod
     def get_image_token_id(self) -> int:
         """Get the token ID used for image patches in this model."""
+
+    @property
+    def has_strict_residual_stream(self) -> bool:
+        """Whether hook_resid_post equals next hook_resid_pre exactly."""
+
+        return True

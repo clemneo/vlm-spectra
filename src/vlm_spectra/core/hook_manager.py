@@ -126,17 +126,15 @@ class HookManager:
         if self._patch_handles:
             self.remove_patch_hooks()
 
+        registrations = []
+
         for hook_name, hook_fn in hooks:
-            # Expand wildcards
             expanded_names = HookPoint.expand(hook_name, self._adapter.lm_num_layers)
 
             for full_name in expanded_names:
                 hook_type, layer = HookPoint.parse(full_name)
-
-                # Validate hook type can be used for patching
                 validate_patch_hook_type(hook_type)
 
-                # Get the module
                 module_getter = HookPoint.get_module_getter(hook_type)
                 getter_fn = getattr(self._adapter, module_getter, None)
                 if getter_fn is None:
@@ -145,10 +143,17 @@ class HookManager:
                     )
                 module = getter_fn(layer)
 
-                # Wrap hook_fn to handle tuple outputs from modules
                 wrapped_fn = self._wrap_patch_hook(hook_fn)
-                handle = module.register_forward_hook(wrapped_fn, with_kwargs=True)
-                self._patch_handles.append(handle)
+                registrations.append((module, wrapped_fn))
+
+        # Register in reverse so prepend=True preserves caller order
+        for module, wrapped_fn in reversed(registrations):
+            handle = module.register_forward_hook(
+                wrapped_fn,
+                with_kwargs=True,
+                prepend=True,
+            )
+            self._patch_handles.append(handle)
 
     def finalize_cache(self, cache: ActivationCache, names: List[str]) -> None:
         """Compute derived cache entries that require extra inputs."""
@@ -220,7 +225,7 @@ class HookManager:
             _ = module
             _ = args
             _ = kwargs
-            cache[name] = output
+            cache[name] = self._clone_activation(output)
 
         return hook
 
@@ -229,9 +234,9 @@ class HookManager:
         def hook(module: nn.Module, args, kwargs):
             _ = module
             if len(args) > 0:
-                cache[name] = args[0]
+                cache[name] = self._clone_activation(args[0])
             elif "hidden_states" in kwargs:
-                cache[name] = kwargs["hidden_states"]
+                cache[name] = self._clone_activation(kwargs["hidden_states"])
             return None  # Don't modify inputs
 
         return hook
@@ -242,30 +247,43 @@ class HookManager:
             _ = module
             hook_data = {}
             if len(args) > 0:
-                hook_data["hidden_states"] = args[0]
+                hook_data["hidden_states"] = self._clone_activation(args[0])
             if len(args) > 1:
                 if isinstance(args[1], tuple):
-                    hook_data["position_embeddings"] = args[1]
+                    hook_data["position_embeddings"] = self._clone_activation(args[1])
                 else:
-                    hook_data["attention_mask"] = args[1]
+                    hook_data["attention_mask"] = self._clone_activation(args[1])
             if (
                 len(args) > 2
                 and "position_ids" not in hook_data
                 and "position_embeddings" not in hook_data
             ):
-                hook_data["position_ids"] = args[2]
+                hook_data["position_ids"] = self._clone_activation(args[2])
             elif "hidden_states" in kwargs:
-                hook_data["hidden_states"] = kwargs["hidden_states"]
+                hook_data["hidden_states"] = self._clone_activation(
+                    kwargs["hidden_states"]
+                )
 
-            hook_data["attention_mask"] = kwargs.get(
-                "attention_mask", hook_data.get("attention_mask")
-            )
-            hook_data["position_ids"] = kwargs.get(
-                "position_ids", hook_data.get("position_ids")
-            )
-            hook_data["position_embeddings"] = kwargs.get(
-                "position_embeddings", hook_data.get("position_embeddings")
-            )
+            if "attention_mask" in kwargs:
+                hook_data["attention_mask"] = self._clone_activation(
+                    kwargs["attention_mask"]
+                )
+            else:
+                hook_data["attention_mask"] = hook_data.get("attention_mask")
+
+            if "position_ids" in kwargs:
+                hook_data["position_ids"] = self._clone_activation(kwargs["position_ids"])
+            else:
+                hook_data["position_ids"] = hook_data.get("position_ids")
+
+            if "position_embeddings" in kwargs:
+                hook_data["position_embeddings"] = self._clone_activation(
+                    kwargs["position_embeddings"]
+                )
+            else:
+                hook_data["position_embeddings"] = hook_data.get(
+                    "position_embeddings"
+                )
             self._input_cache[name] = hook_data
             return None  # Don't modify inputs
 
@@ -277,11 +295,25 @@ class HookManager:
             _ = module
             _ = output
             if len(args) > 0:
-                self._input_cache[name] = args[0]
+                self._input_cache[name] = self._clone_activation(args[0])
             elif "hidden_states" in kwargs:
-                self._input_cache[name] = kwargs["hidden_states"]
+                self._input_cache[name] = self._clone_activation(kwargs["hidden_states"])
 
         return hook
+
+    @staticmethod
+    def _clone_activation(value):
+        """Detach and clone tensors to avoid downstream in-place mutation."""
+
+        if isinstance(value, torch.Tensor):
+            return value.detach().clone()
+        if isinstance(value, tuple):
+            return tuple(HookManager._clone_activation(v) for v in value)
+        if isinstance(value, list):
+            return [HookManager._clone_activation(v) for v in value]
+        if isinstance(value, dict):
+            return {k: HookManager._clone_activation(v) for k, v in value.items()}
+        return value
 
     def _wrap_patch_hook(
         self,

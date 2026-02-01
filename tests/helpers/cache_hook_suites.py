@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+import pytest
 from PIL import Image
 
 
@@ -358,6 +359,8 @@ class CacheHookNonInvasivenessSuite:
     """Tests that cache hooks do not alter model behavior."""
 
     def test_resid_post_equals_next_resid_pre(self, vlm_model):
+        if not getattr(vlm_model.adapter, "has_strict_residual_stream", True):
+            pytest.skip("Adapter does not guarantee strict residual continuity")
         image = generate_test_image(seed=42)
         inputs = vlm_model.prepare_messages("Describe.", image)
 

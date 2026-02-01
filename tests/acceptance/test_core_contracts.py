@@ -79,12 +79,12 @@ class TestCoreContracts:
         image = generate_random_image()
         inputs = model.prepare_messages("Describe.", image)
 
-        with model.run_with_cache(["lm_resid_post"]):
+        with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
             model.forward(inputs)
 
         assert model.cache is not None
-        assert ("lm_resid_post", 0) in model.cache
-        assert isinstance(model.cache[("lm_resid_post", 0)], torch.Tensor)
+        assert "lm.blocks.0.hook_resid_post" in model.cache
+        assert isinstance(model.cache["lm.blocks.0.hook_resid_post"], torch.Tensor)
 
     # --- Contract 5: Hooks Modify Output ---
 
@@ -108,12 +108,12 @@ class TestCoreContracts:
         image = generate_random_image()
         inputs = model.prepare_messages("Describe.", image)
 
-        with model.run_with_cache(["lm_resid_post"]):
+        with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
             model.forward(inputs)
 
         # Each layer's hidden state: [batch=1, seq_len, hidden_dim]
         shapes = [
-            model.cache[("lm_resid_post", i)].shape
+            model.cache[f"lm.blocks.{i}.hook_resid_post"].shape
             for i in range(model.lm_num_layers)
         ]
         assert all(s == shapes[0] for s in shapes)

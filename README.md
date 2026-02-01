@@ -27,6 +27,21 @@ uv sync
 uv pip install -e .
 ```
 
+### Pre-download Model Weights
+
+The acceptance tests can target several large checkpoints. Run the preload helper
+once to fetch every supported model into your local Hugging Face cache (progress
+bars are provided by Hugging Face):
+
+```bash
+uv run tests/download_models.py
+```
+
+Use `--model` to pull a specific checkpoint, `--all-models` to force refreshing
+everything, or `--list-models` to inspect what’s available. The helper talks
+directly to the underlying Hugging Face models/processors, so it still works if
+`HookedVLM` happens to be broken during development.
+
 ### Basic Usage
 
 ```python
