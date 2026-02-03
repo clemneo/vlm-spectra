@@ -15,22 +15,28 @@ MODEL_CAPABILITIES = {
     "HuggingFaceTB/SmolVLM-256M-Instruct": {
         "contiguous_image_tokens": False,
         "supports_batching": True,
+        "strict_residual_stream": True,
     },
     "HuggingFaceTB/SmolVLM-500M-Instruct": {
         "contiguous_image_tokens": False,
         "supports_batching": True,
+        "strict_residual_stream": True,
     },
     "HuggingFaceTB/SmolVLM-Instruct": {
         "contiguous_image_tokens": False,
         "supports_batching": True,
+        "strict_residual_stream": True,
     },
     "ByteDance-Seed/UI-TARS-1.5-7B": {
         "contiguous_image_tokens": True,
         "supports_batching": True,
+        "strict_residual_stream": True,
     },
     "Qwen/Qwen3-VL-8B-Instruct": {
         "contiguous_image_tokens": True,
         "supports_batching": True,
+        # Qwen3-VL uses deepstack which modifies hidden states in-place after layers
+        "strict_residual_stream": False,
     },
 }
 

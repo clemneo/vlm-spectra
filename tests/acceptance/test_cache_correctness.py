@@ -21,6 +21,7 @@ def generate_random_image(width=56, height=56, seed=None):
 class TestCacheCorrectness:
     """Verify cached activations match HuggingFace outputs."""
 
+    @pytest.mark.requires_capability("strict_residual_stream")
     def test_resid_post_matches_hidden_states(self, model):
         """Cached hook_resid_post should match output_hidden_states."""
         model.model.eval()

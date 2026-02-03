@@ -23,6 +23,19 @@ __all__ = [
 ]
 
 
+def _to_cpu(value):
+    """Detach tensors and move them to CPU for shape assertions."""
+    if isinstance(value, torch.Tensor):
+        return value.detach().to("cpu")
+    if isinstance(value, tuple):
+        return tuple(_to_cpu(v) for v in value)
+    if isinstance(value, list):
+        return [_to_cpu(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _to_cpu(v) for k, v in value.items()}
+    return value
+
+
 def generate_test_image(width: int = 56, height: int = 56, seed: int | None = None):
     """Generate a deterministic RGB image for hook tests."""
     if seed is not None:
@@ -63,6 +76,10 @@ def collect_cache_metadata(model):
 
     with model.run_with_cache(hooks) as cache:
         model.forward(inputs)
+
+    # Move cached activations to CPU so test assertions don't mix devices.
+    for key in list(cache.keys()):
+        cache[key] = _to_cpu(cache[key])
 
     return {
         "cache": cache,
