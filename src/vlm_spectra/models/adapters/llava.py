@@ -187,6 +187,11 @@ if LlavaForConditionalGeneration is not None:
                 attn_layer.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
             )
 
+            # Apply RoPE if position_embeddings provided.
+            # Note: In transformers 4.50+, LlamaModel precomputes position_embeddings
+            # at the model level and passes them to attention layers. The attention
+            # forward() no longer accepts position_ids directly, so position_embeddings
+            # will always be present when hooks capture layer inputs.
             if position_embeddings is not None:
                 cos, sin = position_embeddings
                 query_states, key_states = apply_rotary_pos_emb(
