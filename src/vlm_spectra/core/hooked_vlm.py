@@ -11,6 +11,7 @@ from vlm_spectra.core.hook_manager import HookManager
 from vlm_spectra.core.hook_points import HookPoint
 from vlm_spectra.models.registry import ModelRegistry
 from vlm_spectra.preprocessing.prompts import default_prompt_for_model
+from vlm_spectra.preprocessing.llava_processor import LlavaProcessor
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
 from vlm_spectra.preprocessing.smolvlm_processor import SmolVLMProcessor
 from vlm_spectra.preprocessing.utils.vision_info import (
@@ -72,6 +73,8 @@ class HookedVLM:
         )
         if "SmolVLM" in model_name:
             processor = SmolVLMProcessor(hf_processor, default_prompt=default_prompt)
+        elif "llava" in model_name.lower():
+            processor = LlavaProcessor(hf_processor, default_prompt=default_prompt)
         else:
             image_factor = cls._resolve_image_factor(model)
             processor = QwenProcessor(
@@ -254,9 +257,7 @@ class HookedVLM:
         input_ids = input_ids.squeeze(0)
         image_token_id = self.adapter.get_image_token_id()
 
-        image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)[
-            0
-        ]
+        image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)[0]
 
         if len(image_token_positions) == 0:
             raise ValueError("No image tokens found in the input sequence")
@@ -273,9 +274,7 @@ class HookedVLM:
 
         vision_config = self.model.config.vision_config
         model_name = getattr(self.model.config, "name_or_path", None)
-        patch_size, spatial_merge_size = resolve_patch_params(
-            vision_config, model_name
-        )
+        patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
         resized_height, resized_width = smart_resize(
             height,
             width,
@@ -324,7 +323,10 @@ class HookedVLM:
             patch_num = start_number
             for i in range(merged_grid_h):
                 for j in range(merged_grid_w):
-                    if patch_num % 10 == 1 or patch_num == merged_grid_h * merged_grid_w:
+                    if (
+                        patch_num % 10 == 1
+                        or patch_num == merged_grid_h * merged_grid_w
+                    ):
                         x = j * effective_patch_size + effective_patch_size // 4
                         y = i * effective_patch_size + effective_patch_size // 4
 
