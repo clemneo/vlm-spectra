@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from vlm_spectra.core.activation_cache import ActivationCache
 from vlm_spectra.core.hook_manager import HookManager
+from vlm_spectra.core.hook_points import HookPoint
 from vlm_spectra.models.registry import ModelRegistry
 from vlm_spectra.preprocessing.prompts import default_prompt_for_model
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
@@ -151,23 +152,77 @@ class HookedVLM:
 
     @contextmanager
     def run_with_cache(self, cache_names: List[str]):
+        """Context manager for capturing activations.
+
+        Args:
+            cache_names: List of hook names to capture. Supports wildcards.
+                Examples:
+                    ["lm.blocks.*.hook_resid_post"]  # all layers
+                    ["lm.blocks.5.hook_resid_post"]  # specific layer
+                    ["lm.blocks.*.attn.hook_pattern"]  # attention patterns
+
+        Yields:
+            ActivationCache with captured activations accessible by string keys.
+
+        Example:
+            with model.run_with_cache(["lm.blocks.*.hook_resid_post"]) as cache:
+                model.forward(inputs)
+            residual = cache["lm.blocks.5.hook_resid_post"]
+            stacked = cache.stack("lm.blocks.*.hook_resid_post")
+        """
         cache = ActivationCache()
         self._hook_manager.register_cache_hooks(cache, cache_names)
         try:
             yield cache
         finally:
-            self._hook_manager.remove_cache_hooks()
             self._hook_manager.finalize_cache(cache, cache_names)
+            self._hook_manager.remove_cache_hooks()
             for key in list(cache.keys()):
-                cache[key] = self.adapter.format_cache_item(key[0], cache[key])
+                hook_type, _ = HookPoint.parse(key)
+                cache[key] = self.adapter.format_cache_item(hook_type, cache[key])
             self.cache = cache._data
 
     @contextmanager
-    def run_with_hooks(self, hooks):
+    def run_with_hooks(self, hooks: List[Tuple[str, Callable]]):
         """Context manager for patching activations.
 
-        Hooks should have a `hook_point` attribute specifying where to attach
-        and a `layer` attribute specifying which layer to hook.
+        Args:
+            hooks: List of (hook_name, hook_fn) tuples where:
+                - hook_name: Full hook name like 'lm.blocks.5.hook_resid_post'
+                  or with wildcard like 'lm.blocks.*.hook_resid_post'
+                - hook_fn: Callable with signature (module, args, kwargs, output) -> output | None
+                  Return modified output, or None to keep original.
+
+        Valid hook points (post-hooks, no virtual hooks):
+            - hook_resid_post: layer output
+            - attn.hook_q, attn.hook_k, attn.hook_v: QKV projections
+            - attn.hook_out: attention output
+            - mlp.hook_pre, mlp.hook_pre_linear: gate/up projections
+            - mlp.hook_out: MLP output
+
+        Valid pre-hook points (for head-level patching):
+            - attn.hook_z: pre o_proj, use with PatchHead for individual head patching
+
+        Example:
+            def scale_hook(module, args, kwargs, output):
+                return output * 0.5
+
+            with model.run_with_hooks([('lm.blocks.5.hook_resid_post', scale_hook)]):
+                model.forward(inputs)
+
+        Example with PatchHead (head-level patching):
+            from vlm_spectra.core.patch_hooks import PatchHead
+
+            num_heads = model.adapter.lm_num_heads
+            head_dim = model.adapter.lm_head_dim
+            replacement = torch.zeros(head_dim, device=model.device)
+
+            patch = PatchHead(head_idx=0, replacement=replacement, num_heads=num_heads)
+            with model.run_with_hooks([("lm.blocks.5.attn.hook_z", patch)]):
+                model.forward(inputs)
+
+        Yields:
+            None
         """
         self._hook_manager.register_patch_hooks(hooks)
         try:

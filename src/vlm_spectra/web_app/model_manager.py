@@ -368,7 +368,7 @@ class ModelManager:
             
             # Run forward pass with cache to get attention heads and MLP outputs
             start_time = time.time()
-            with self.model.run_with_cache(["lm_attn_out", "lm_mlp_out"]):
+            with self.model.run_with_cache(["lm.blocks.*.attn.hook_out", "lm.blocks.*.mlp.hook_out"]):
                 outputs = self.model.forward(inputs)
             inference_time = time.time() - start_time
             
@@ -401,12 +401,12 @@ class ModelManager:
             
             for layer_idx in range(self.model.adapter.lm_num_layers):
                 # Attention heads: shape (batch_size, seq_len, num_heads, head_dim)
-                attn_key = ("lm_attn_out", layer_idx)
+                attn_key = f"lm.blocks.{layer_idx}.attn.hook_out"
                 if attn_key in self.model.cache:
                     attention_heads[layer_idx] = self.model.cache[attn_key][0]  # Remove batch dimension
-                
+
                 # MLP outputs: shape (batch_size, seq_len, hidden_dim)
-                mlp_key = ("lm_mlp_out", layer_idx)
+                mlp_key = f"lm.blocks.{layer_idx}.mlp.hook_out"
                 if mlp_key in self.model.cache:
                     mlp_outputs[layer_idx] = self.model.cache[mlp_key][0]  # Remove batch dimension
             
@@ -553,15 +553,15 @@ class ModelManager:
 
             # Run forward pass with attention pattern cache
             start_time = time.time()
-            with self.model.run_with_cache(["lm_attn_pattern"]):
+            with self.model.run_with_cache(["lm.blocks.*.attn.hook_pattern"]):
                 self.model.forward(inputs)
             inference_time = time.time() - start_time
-            
+
             # Extract attention patterns for the specified layer
-            attention_key = ("lm_attn_pattern", layer)
+            attention_key = f"lm.blocks.{layer}.attn.hook_pattern"
             if attention_key not in self.model.cache:
                 raise ValueError(f"Attention patterns not found for layer {layer}")
-            
+
             # Get attention weights: [batch, num_heads, seq_len, seq_len]
             attention_weights = self.model.cache[attention_key]
             batch_size, num_heads, seq_len, _ = attention_weights.shape
@@ -859,7 +859,7 @@ class ModelManager:
             
             # Run forward pass with cache to get layer-wise hidden states
             start_time = time.time()
-            with self.model.run_with_cache(["lm_resid_post"]):
+            with self.model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
                 outputs = self.model.forward(inputs)
             inference_time = time.time() - start_time
             
@@ -898,7 +898,7 @@ class ModelManager:
             
             # Process each layer's hidden states
             for layer_idx in range(self.model.adapter.lm_num_layers):
-                cache_key = ("lm_resid_post", layer_idx)
+                cache_key = f"lm.blocks.{layer_idx}.hook_resid_post"
                 if cache_key in self.model.cache:
                     # Get hidden state for last token position at this layer
                     hidden_state = self.model.cache[cache_key][0, -1, :]  # [hidden_dim]

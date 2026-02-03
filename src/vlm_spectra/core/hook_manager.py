@@ -1,169 +1,215 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import torch
 import torch.nn as nn
 from torch.utils.hooks import RemovableHandle
 
 from vlm_spectra.core.activation_cache import ActivationCache
+from vlm_spectra.core.hook_points import HookPoint
+from vlm_spectra.core.patch_hooks import validate_patch_hook_type
 
-if TYPE_CHECKING:
-    from vlm_spectra.hooks.base import Hook
-
-
-class HookPointRegistry:
-    """Single source of truth for hook point configuration."""
-
-    HOOK_POINTS = {
-        "lm.layer.pre": {"module_getter": "get_lm_layer", "is_pre_hook": True},
-        "lm.layer.post": {"module_getter": "get_lm_layer", "is_pre_hook": False},
-        "lm.attn.out": {"module_getter": "get_lm_o_proj", "is_pre_hook": False},
-        "lm.attn.head": {"module_getter": "get_lm_o_proj", "is_pre_hook": True},
-        "lm.attn.pre": {"module_getter": "get_lm_attn", "is_pre_hook": True},
-        "lm.attn.pattern": {"module_getter": "get_lm_attn", "is_pre_hook": True},
-        "lm.mlp.out": {"module_getter": "get_lm_mlp", "is_pre_hook": False},
-    }
-
-    LEGACY_TO_CANONICAL = {
-        "lm_resid_pre": "lm.layer.pre",
-        "lm_resid_post": "lm.layer.post",
-        "lm_resid_mid": "lm.layer.mid",
-        "lm_attn_out": "lm.attn.out",
-        "lm_attn_head": "lm.attn.head",
-        "lm_attn_pattern": "lm.attn.pattern",
-        "lm_mlp_out": "lm.mlp.out",
-    }
-
-    @classmethod
-    def canonicalize(cls, name: str) -> str:
-        """Convert legacy or canonical name to canonical form."""
-        if name in cls.LEGACY_TO_CANONICAL:
-            return cls.LEGACY_TO_CANONICAL[name]
-        if name in cls.HOOK_POINTS:
-            return name
-        raise NotImplementedError(f"Unknown hook point: {name}")
-
-    @classmethod
-    def get_module(cls, adapter, hook_point: str, layer: int) -> nn.Module:
-        """Get the module for a hook point from the adapter."""
-        canonical = cls.canonicalize(hook_point)
-        config = cls.HOOK_POINTS[canonical]
-        getter = getattr(adapter, config["module_getter"])
-        return getter(layer)
-
-    @classmethod
-    def is_pre_hook(cls, hook_point: str) -> bool:
-        """Check if hook point requires a pre-hook."""
-        canonical = cls.canonicalize(hook_point)
-        return cls.HOOK_POINTS[canonical]["is_pre_hook"]
+from vlm_spectra.models.base_adapter import ModelAdapter
 
 
 class HookManager:
-    """Manages PyTorch hook lifecycle for interpretability."""
+    """Manages PyTorch hook lifecycle for interpretability.
 
-    def __init__(self, adapter: "ModelAdapter") -> None:
+    Supports TransformerLens-style hook naming:
+        lm.blocks.{layer}.{hook_type}
+
+    Examples:
+        manager.register_cache_hooks(cache, ["lm.blocks.*.hook_resid_post"])
+        manager.register_cache_hooks(cache, ["lm.blocks.5.attn.hook_pattern"])
+    """
+
+    def __init__(self, adapter: ModelAdapter) -> None:
         self._adapter = adapter
         self._cache_handles: List[RemovableHandle] = []
         self._patch_handles: List[RemovableHandle] = []
-        self._input_cache: Dict[Tuple[str, int], Any] = {}
-        self._canonical_names: Dict[str, str] = {}
+        self._input_cache: Dict[str, Any] = {}
+        self._registered_hooks: List[str] = []
 
     def register_cache_hooks(self, cache: ActivationCache, names: List[str]) -> None:
-        """Register hooks that capture activations into cache."""
+        """Register hooks that capture activations into cache.
+
+        Args:
+            cache: ActivationCache to store captured activations
+            names: List of hook names, may include wildcards (e.g., "lm.blocks.*.hook_resid_post")
+        """
         if self._cache_handles:
             self.remove_cache_hooks()
         self._input_cache = {}
-        self._canonical_names = {}
+        self._registered_hooks = []
 
+        # Expand wildcards and register hooks
         for name in names:
-            if not name.startswith("lm"):
-                raise NotImplementedError("Only LM hooks are supported for now")
+            if not name.startswith("lm."):
+                raise ValueError("Invalid Hook Name. Only LM hooks (starting with 'lm.') are supported for now")
 
-            canonical = HookPointRegistry.canonicalize(name)
-            self._canonical_names[name] = canonical
-            if canonical == "lm.layer.mid":
-                raise NotImplementedError("Resid_mid hooks are not supported for now")
+            expanded_names = HookPoint.expand(name, self._adapter.lm_num_layers)
+            for full_name in expanded_names:
+                self._register_single_cache_hook(cache, full_name)
+                self._registered_hooks.append(full_name)
 
-            is_pre = HookPointRegistry.is_pre_hook(canonical)
+    def _register_single_cache_hook(self, cache: ActivationCache, name: str) -> None:
+        """Register a single cache hook for a specific layer."""
+        hook_type, layer = HookPoint.parse(name)
+        module_getter = HookPoint.get_module_getter(hook_type)
+        is_pre = HookPoint.is_pre_hook(hook_type)
+        is_virtual = HookPoint.is_virtual(hook_type)
 
-            for layer in range(self._adapter.lm_num_layers):
-                module = HookPointRegistry.get_module(self._adapter, canonical, layer)
+        # Get module from adapter
+        getter_fn = getattr(self._adapter, module_getter, None)
+        if getter_fn is None:
+            raise NotImplementedError(
+                f"Adapter does not implement {module_getter} for hook {hook_type}"
+            )
+        module = getter_fn(layer)
 
-                # Determine hook function and type based on what we're capturing
-                if canonical == "lm.attn.out":
-                    # lm.attn.out: post-hook on o_proj, capture input for per-head decomposition
-                    hook_fn = self._save_input_hook_post(layer, name)
-                    handle = module.register_forward_hook(hook_fn, with_kwargs=True)
-                elif canonical == "lm.attn.pattern":
-                    # lm.attn.pattern: pre-hook on attn, capture inputs for pattern computation
-                    hook_fn = self._save_input_hook_pre(layer, name, canonical)
-                    handle = module.register_forward_pre_hook(hook_fn, with_kwargs=True)
-                elif is_pre:
-                    # Pre-hooks capture input to the module
-                    hook_fn = self._save_pre_hook(cache, layer, name)
-                    handle = module.register_forward_pre_hook(hook_fn, with_kwargs=True)
-                else:
-                    # Post-hooks capture output from the module
-                    hook_fn = self._save_output_hook(cache, layer, name)
-                    handle = module.register_forward_hook(hook_fn, with_kwargs=True)
+        # Computed hooks need special handling
+        if is_virtual:
+            if hook_type == "attn.hook_pattern":
+                # Capture inputs to attention for pattern computation
+                hook_fn = self._save_pattern_inputs(name)
+                handle = module.register_forward_pre_hook(hook_fn, with_kwargs=True)
+            elif hook_type == "attn.hook_head_out":
+                # Capture input to o_proj for per-head decomposition
+                hook_fn = self._save_o_proj_input(name)
+                handle = module.register_forward_hook(hook_fn, with_kwargs=True)
+            elif hook_type == "hook_resid_mid":
+                raise NotImplementedError("hook_resid_mid is not yet implemented")
+            elif hook_type == "attn.hook_scores":
+                # Reuse same capture as attn.hook_pattern
+                hook_fn = self._save_pattern_inputs(name)
+                handle = module.register_forward_pre_hook(hook_fn, with_kwargs=True)
+            else:
+                raise NotImplementedError(f"Computed hook {hook_type} is not yet implemented")
+        elif is_pre:
+            # Pre-hooks capture input to the module
+            hook_fn = self._save_pre_hook(cache, name)
+            handle = module.register_forward_pre_hook(hook_fn, with_kwargs=True)
+        else:
+            # Post-hooks capture output from the module
+            hook_fn = self._save_output_hook(cache, name)
+            handle = module.register_forward_hook(hook_fn, with_kwargs=True)
 
-                self._cache_handles.append(handle)
+        self._cache_handles.append(handle)
 
-    def register_patch_hooks(self, hooks: List["Hook"]) -> None:
-        """Register hooks that modify activations."""
+    def register_patch_hooks(
+        self,
+        hooks: List[Tuple[str, Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]]]],
+    ) -> None:
+        """Register hooks that modify activations using tuple-based API.
+
+        Args:
+            hooks: List of (hook_name, hook_fn) tuples where:
+                - hook_name: Full hook name like 'lm.blocks.5.hook_resid_post'
+                  or with wildcard like 'lm.blocks.*.hook_resid_post'
+                - hook_fn: Callable with signature (module, args, kwargs, output) -> output | None
+                  Return modified output, or None to keep original.
+
+        Raises:
+            ValueError: If hook_type is a virtual hook or an unsupported pre-hook
+
+        Example:
+            def zero_hook(module, args, kwargs, output):
+                return torch.zeros_like(output)
+
+            manager.register_patch_hooks([
+                ('lm.blocks.5.hook_resid_post', zero_hook),
+                ('lm.blocks.*.mlp.hook_out', ScaleActivation(0.5)),
+                ('lm.blocks.5.attn.hook_z', PatchHead(...)),  # Pre-hook patching
+            ])
+        """
         if self._patch_handles:
             self.remove_patch_hooks()
-        for hook in hooks:
-            hook_point = getattr(hook, "hook_point", "lm.layer.post")
-            layer = hook.layer
 
-            # Inject num_heads for hooks that need it (e.g., PatchHeadHook)
-            if hasattr(hook, "set_num_heads"):
-                hook.set_num_heads(self._adapter.lm_num_heads)
+        registrations = []
 
-            module = HookPointRegistry.get_module(self._adapter, hook_point, layer)
-            is_pre = HookPointRegistry.is_pre_hook(hook_point)
+        for hook_name, hook_fn in hooks:
+            expanded_names = HookPoint.expand(hook_name, self._adapter.lm_num_layers)
 
+            for full_name in expanded_names:
+                hook_type, layer = HookPoint.parse(full_name)
+                is_pre = validate_patch_hook_type(hook_type)
+
+                module_getter = HookPoint.get_module_getter(hook_type)
+                getter_fn = getattr(self._adapter, module_getter, None)
+                if getter_fn is None:
+                    raise NotImplementedError(
+                        f"Adapter does not implement {module_getter} for hook {hook_type}"
+                    )
+                module = getter_fn(layer)
+
+                if is_pre:
+                    wrapped_fn = self._wrap_pre_patch_hook(hook_fn)
+                else:
+                    wrapped_fn = self._wrap_patch_hook(hook_fn)
+                registrations.append((module, wrapped_fn, is_pre))
+
+        # Register in reverse so prepend=True preserves caller order
+        for module, wrapped_fn, is_pre in reversed(registrations):
             if is_pre:
                 handle = module.register_forward_pre_hook(
-                    self._wrap_pre_hook(hook), with_kwargs=True
+                    wrapped_fn,
+                    with_kwargs=True,
+                    prepend=True,
                 )
             else:
-                handle = module.register_forward_hook(hook, with_kwargs=True)
+                handle = module.register_forward_hook(
+                    wrapped_fn,
+                    with_kwargs=True,
+                    prepend=True,
+                )
             self._patch_handles.append(handle)
 
     def finalize_cache(self, cache: ActivationCache, names: List[str]) -> None:
         """Compute derived cache entries that require extra inputs."""
-        for name in names:
-            canonical = self._canonical_names.get(name, HookPointRegistry.canonicalize(name))
-            if canonical == "lm.attn.out":
-                for layer in range(self._adapter.lm_num_layers):
-                    key = (name, layer)
-                    if key in self._input_cache:
-                        concatenated_heads = self._input_cache[key]
-                        cache[key] = self._adapter.compute_per_head_contributions(
-                            concatenated_heads, layer
+        for name in self._registered_hooks:
+            hook_type, layer = HookPoint.parse(name)
+
+            if hook_type == "attn.hook_head_out":
+                if name in self._input_cache:
+                    concatenated_heads = self._input_cache[name]
+                    cache[name] = self._adapter.compute_per_head_contributions(
+                        concatenated_heads, layer
+                    )
+
+            elif hook_type == "attn.hook_pattern":
+                if name in self._input_cache:
+                    hook_data = self._input_cache[name]
+                    if isinstance(hook_data, dict):
+                        attn_patterns = self._adapter.compute_attention_patterns(
+                            hidden_states=hook_data["hidden_states"],
+                            layer=layer,
+                            attention_mask=hook_data.get("attention_mask"),
+                            position_ids=hook_data.get("position_ids"),
+                            position_embeddings=hook_data.get("position_embeddings"),
                         )
-            elif canonical == "lm.attn.pattern":
-                for layer in range(self._adapter.lm_num_layers):
-                    key = (name, layer)
-                    if key in self._input_cache:
-                        hook_data = self._input_cache[key]
-                        if isinstance(hook_data, dict):
-                            attn_patterns = self._adapter.compute_attention_patterns(
-                                hidden_states=hook_data["hidden_states"],
-                                layer=layer,
-                                attention_mask=hook_data.get("attention_mask"),
-                                position_ids=hook_data.get("position_ids"),
-                                position_embeddings=hook_data.get(
-                                    "position_embeddings"
-                                ),
-                            )
-                        else:
-                            attn_patterns = self._adapter.compute_attention_patterns(
-                                hook_data, layer
-                            )
-                        cache[key] = attn_patterns
+                    else:
+                        attn_patterns = self._adapter.compute_attention_patterns(
+                            hook_data, layer
+                        )
+                    cache[name] = attn_patterns
+
+            elif hook_type == "attn.hook_scores":
+                if name in self._input_cache:
+                    hook_data = self._input_cache[name]
+                    if isinstance(hook_data, dict):
+                        attn_scores = self._adapter.compute_attention_scores(
+                            hidden_states=hook_data["hidden_states"],
+                            layer=layer,
+                            attention_mask=hook_data.get("attention_mask"),
+                            position_ids=hook_data.get("position_ids"),
+                            position_embeddings=hook_data.get("position_embeddings"),
+                        )
+                    else:
+                        attn_scores = self._adapter.compute_attention_scores(
+                            hook_data, layer
+                        )
+                    cache[name] = attn_scores
 
     def remove_all_hooks(self) -> None:
         """Remove all registered hooks."""
@@ -175,6 +221,7 @@ class HookManager:
         for handle in self._cache_handles:
             handle.remove()
         self._cache_handles.clear()
+        self._registered_hooks.clear()
 
     def remove_patch_hooks(self) -> None:
         """Remove patch hooks only."""
@@ -182,101 +229,178 @@ class HookManager:
             handle.remove()
         self._patch_handles.clear()
 
-    def _save_output_hook(self, cache: ActivationCache, layer: int, hook_name: str):
+    def _save_output_hook(self, cache: ActivationCache, name: str):
         """Create a hook that saves module output to cache."""
         def hook(module: nn.Module, args, kwargs, output):
             _ = module
             _ = args
             _ = kwargs
-            cache[(hook_name, layer)] = output
+            cache[name] = self._clone_activation(output)
 
         return hook
 
-    def _save_pre_hook(self, cache: ActivationCache, layer: int, hook_name: str):
+    def _save_pre_hook(self, cache: ActivationCache, name: str):
         """Create a pre-hook that saves module input to cache."""
         def hook(module: nn.Module, args, kwargs):
             _ = module
             if len(args) > 0:
-                cache[(hook_name, layer)] = args[0]
+                cache[name] = self._clone_activation(args[0])
             elif "hidden_states" in kwargs:
-                cache[(hook_name, layer)] = kwargs["hidden_states"]
+                cache[name] = self._clone_activation(kwargs["hidden_states"])
             return None  # Don't modify inputs
 
         return hook
 
-    def _save_input_hook_pre(self, layer: int, hook_name: str, canonical: str):
-        """Create a PRE-hook that saves input data for later finalization."""
+    def _save_pattern_inputs(self, name: str):
+        """Create a pre-hook that saves inputs for attention pattern computation."""
         def hook(module: nn.Module, args, kwargs):
             _ = module
-            if canonical == "lm.attn.pattern":
-                hook_data = {}
-                if len(args) > 0:
-                    hook_data["hidden_states"] = args[0]
-                if len(args) > 1:
-                    if isinstance(args[1], tuple):
-                        hook_data["position_embeddings"] = args[1]
-                    else:
-                        hook_data["attention_mask"] = args[1]
-                if (
-                    len(args) > 2
-                    and "position_ids" not in hook_data
-                    and "position_embeddings" not in hook_data
-                ):
-                    hook_data["position_ids"] = args[2]
-                elif "hidden_states" in kwargs:
-                    hook_data["hidden_states"] = kwargs["hidden_states"]
+            hook_data = {}
+            if len(args) > 0:
+                hook_data["hidden_states"] = self._clone_activation(args[0])
+            if len(args) > 1:
+                if isinstance(args[1], tuple):
+                    hook_data["position_embeddings"] = self._clone_activation(args[1])
+                else:
+                    hook_data["attention_mask"] = self._clone_activation(args[1])
+            if (
+                len(args) > 2
+                and "position_ids" not in hook_data
+                and "position_embeddings" not in hook_data
+            ):
+                hook_data["position_ids"] = self._clone_activation(args[2])
+            elif "hidden_states" in kwargs:
+                hook_data["hidden_states"] = self._clone_activation(
+                    kwargs["hidden_states"]
+                )
 
-                hook_data["attention_mask"] = kwargs.get(
-                    "attention_mask", hook_data.get("attention_mask")
+            if "attention_mask" in kwargs:
+                hook_data["attention_mask"] = self._clone_activation(
+                    kwargs["attention_mask"]
                 )
-                # Fix: preserve args-derived value if kwargs doesn't have it
-                hook_data["position_ids"] = kwargs.get(
-                    "position_ids", hook_data.get("position_ids")
-                )
-                hook_data["position_embeddings"] = kwargs.get(
-                    "position_embeddings", hook_data.get("position_embeddings")
-                )
-                self._input_cache[(hook_name, layer)] = hook_data
             else:
-                # For other hooks: capture first arg
-                if len(args) > 0:
-                    self._input_cache[(hook_name, layer)] = args[0]
-                elif "hidden_states" in kwargs:
-                    self._input_cache[(hook_name, layer)] = kwargs["hidden_states"]
+                hook_data["attention_mask"] = hook_data.get("attention_mask")
+
+            if "position_ids" in kwargs:
+                hook_data["position_ids"] = self._clone_activation(kwargs["position_ids"])
+            else:
+                hook_data["position_ids"] = hook_data.get("position_ids")
+
+            if "position_embeddings" in kwargs:
+                hook_data["position_embeddings"] = self._clone_activation(
+                    kwargs["position_embeddings"]
+                )
+            else:
+                hook_data["position_embeddings"] = hook_data.get(
+                    "position_embeddings"
+                )
+            self._input_cache[name] = hook_data
             return None  # Don't modify inputs
 
         return hook
 
-    def _save_input_hook_post(self, layer: int, hook_name: str):
-        """Create a POST-hook that saves input (args) for later finalization.
-
-        Used for lm.attn.out where we hook o_proj and capture its input.
-        """
+    def _save_o_proj_input(self, name: str):
+        """Create a post-hook that saves input to o_proj for per-head decomposition."""
         def hook(module: nn.Module, args, kwargs, output):
             _ = module
             _ = output
-            # Capture the input to the module (args[0])
             if len(args) > 0:
-                self._input_cache[(hook_name, layer)] = args[0]
+                self._input_cache[name] = self._clone_activation(args[0])
             elif "hidden_states" in kwargs:
-                self._input_cache[(hook_name, layer)] = kwargs["hidden_states"]
+                self._input_cache[name] = self._clone_activation(kwargs["hidden_states"])
 
         return hook
 
-    def _wrap_pre_hook(self, hook: "Hook"):
-        """Wrap a Hook object for pre-hook signature.
+    @staticmethod
+    def _clone_activation(value):
+        """Detach and clone tensors to avoid downstream in-place mutation."""
 
-        Pre-hooks can return (args, kwargs) to modify inputs.
+        if isinstance(value, torch.Tensor):
+            return value.detach().clone()
+        if isinstance(value, tuple):
+            return tuple(HookManager._clone_activation(v) for v in value)
+        if isinstance(value, list):
+            return [HookManager._clone_activation(v) for v in value]
+        if isinstance(value, dict):
+            return {k: HookManager._clone_activation(v) for k, v in value.items()}
+        return value
+
+    def _wrap_patch_hook(
+        self,
+        hook_fn: Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]],
+    ):
+        """Wrap a patch hook function to handle tuple outputs from modules.
+
+        Some modules return tuples (output, cache_state, ...). This wrapper
+        extracts the first element, passes it to hook_fn, and reconstructs
+        the tuple if needed.
         """
-        def wrapper(module, args, kwargs):
-            result = hook(module, args, kwargs, None)
-            if result is not None:
-                # Support returning (new_args, new_kwargs) tuple
-                if isinstance(result, tuple) and len(result) == 2:
-                    new_args, new_kwargs = result
-                    if isinstance(new_args, tuple) and isinstance(new_kwargs, dict):
-                        return new_args, new_kwargs
-                return result
-            return None
+        def wrapper(module: nn.Module, args: tuple, kwargs: dict, output: Union[torch.Tensor, tuple]):
+            # Handle tuple outputs (common in transformer layers)
+            is_tuple = isinstance(output, tuple)
+            tensor_output = output[0] if is_tuple else output
+
+            # Call the hook function
+            result = hook_fn(module, args, kwargs, tensor_output)
+
+            if result is None:
+                # Hook didn't modify anything
+                return output
+
+            # Reconstruct tuple if original was tuple
+            if is_tuple:
+                return (result,) + output[1:]
+            return result
+
+        return wrapper
+
+    def _wrap_pre_patch_hook(
+        self,
+        hook_fn: Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]],
+    ):
+        """Wrap a patch hook for pre-hook registration.
+
+        Pre-hooks receive (module, args, kwargs) and return modified (args, kwargs).
+        This wrapper extracts tensor from args[0], calls hook_fn with unified
+        signature (module, args, kwargs, tensor), then puts result back into args.
+        """
+        def wrapper(module: nn.Module, args: tuple, kwargs: dict):
+            # Extract tensor from args[0] or kwargs["hidden_states"]
+            if len(args) > 0:
+                original_arg = args[0]
+                is_tuple = isinstance(original_arg, tuple)
+                tensor = original_arg[0] if is_tuple else original_arg
+                from_kwargs = False
+            elif "hidden_states" in kwargs:
+                tensor = kwargs["hidden_states"]
+                is_tuple = isinstance(tensor, tuple)
+                if is_tuple:
+                    tensor = tensor[0]
+                from_kwargs = True
+            else:
+                # No tensor found, skip patching
+                return None
+
+            # Call user hook with unified signature
+            result = hook_fn(module, args, kwargs, tensor)
+
+            if result is None:
+                # No modification
+                return None
+
+            # Put result back into args or kwargs
+            if from_kwargs:
+                new_kwargs = dict(kwargs)
+                if is_tuple:
+                    new_kwargs["hidden_states"] = (result,) + kwargs["hidden_states"][1:]
+                else:
+                    new_kwargs["hidden_states"] = result
+                return args, new_kwargs
+            else:
+                if is_tuple:
+                    new_arg = (result,) + original_arg[1:]
+                else:
+                    new_arg = result
+                return (new_arg,) + args[1:], kwargs
 
         return wrapper

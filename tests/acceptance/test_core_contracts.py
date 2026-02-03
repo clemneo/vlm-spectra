@@ -21,8 +21,6 @@ def generate_random_image(width=56, height=56, seed=None):
 class ZeroingHook:
     """Hook that zeros out layer output."""
 
-    hook_point = "lm.layer.post"
-
     def __init__(self, layer):
         self.layer = layer
 
@@ -79,12 +77,12 @@ class TestCoreContracts:
         image = generate_random_image()
         inputs = model.prepare_messages("Describe.", image)
 
-        with model.run_with_cache(["lm_resid_post"]):
+        with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
             model.forward(inputs)
 
         assert model.cache is not None
-        assert ("lm_resid_post", 0) in model.cache
-        assert isinstance(model.cache[("lm_resid_post", 0)], torch.Tensor)
+        assert "lm.blocks.0.hook_resid_post" in model.cache
+        assert isinstance(model.cache["lm.blocks.0.hook_resid_post"], torch.Tensor)
 
     # --- Contract 5: Hooks Modify Output ---
 
@@ -96,7 +94,7 @@ class TestCoreContracts:
         original = model.forward(inputs).logits.clone()
 
         hook = ZeroingHook(layer=0)
-        with model.run_with_hooks([hook]):
+        with model.run_with_hooks([("lm.blocks.0.hook_resid_post", hook)]):
             modified = model.forward(inputs).logits
 
         assert not torch.allclose(original, modified, atol=1e-3)
@@ -108,12 +106,12 @@ class TestCoreContracts:
         image = generate_random_image()
         inputs = model.prepare_messages("Describe.", image)
 
-        with model.run_with_cache(["lm_resid_post"]):
+        with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
             model.forward(inputs)
 
         # Each layer's hidden state: [batch=1, seq_len, hidden_dim]
         shapes = [
-            model.cache[("lm_resid_post", i)].shape
+            model.cache[f"lm.blocks.{i}.hook_resid_post"].shape
             for i in range(model.lm_num_layers)
         ]
         assert all(s == shapes[0] for s in shapes)

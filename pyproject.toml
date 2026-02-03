@@ -31,6 +31,9 @@ examples = [
     "matplotlib>=3.7",
     "tqdm>=4.65",
 ]
+dev = [
+    "jupyter>=1.1.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

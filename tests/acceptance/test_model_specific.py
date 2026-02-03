@@ -97,10 +97,10 @@ class TestBatchedOperations:
         inputs = model.prepare_messages_batch(tasks, images)
         seq_len = inputs["input_ids"].shape[1]
 
-        with model.run_with_cache(["lm_resid_post"]):
+        with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
             model.forward_batch(tasks=tasks, images=images)
 
-        sample = model.cache[("lm_resid_post", 0)]
+        sample = model.cache["lm.blocks.0.hook_resid_post"]
         expected_shape = (2, seq_len, model.adapter.lm_hidden_dim)
         assert sample.shape == expected_shape
 

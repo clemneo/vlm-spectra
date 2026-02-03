@@ -27,6 +27,21 @@ uv sync
 uv pip install -e .
 ```
 
+### Pre-download Model Weights
+
+The acceptance tests can target several large checkpoints. Run the preload helper
+once to fetch every supported model into your local Hugging Face cache (progress
+bars are provided by Hugging Face):
+
+```bash
+uv run tests/download_models.py
+```
+
+Use `--model` to pull a specific checkpoint, `--all-models` to force refreshing
+everything, or `--list-models` to inspect what’s available. The helper talks
+directly to the underlying Hugging Face models/processors, so it still works if
+`HookedVLM` happens to be broken during development.
+
 ### Basic Usage
 
 ```python
@@ -96,12 +111,14 @@ Context manager for caching specific model components during forward/generate ca
 
 ```python
 # Cache attention patterns and residual outputs
-with model.run_with_cache(["lm_attn_pattern", "lm_resid_post"]):
+with model.run_with_cache(["lm.blocks.*.attn.hook_pattern", "lm.blocks.*.hook_resid_post"]) as cache:
     outputs = model.forward(inputs)
 
 # Access cached values
-attention_cache = model.cache[("lm_attn_pattern", layer_idx)]
-residual_cache = model.cache[("lm_resid_post", layer_idx)]
+attention_cache = cache["lm.blocks.5.attn.hook_pattern"]
+residual_cache = cache["lm.blocks.5.hook_resid_post"]
+# Or stack all layers
+all_residuals = cache.stack("lm.blocks.*.hook_resid_post")
 ```
 
 ### Advanced Analysis

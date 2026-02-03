@@ -5,6 +5,7 @@ import torch.nn as nn
 from einops import einsum, rearrange
 from torch.nn.modules import ModuleList
 from transformers import AutoProcessor
+from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, repeat_kv
 
 try:
     from transformers import Idefics3ForConditionalGeneration
@@ -65,6 +66,24 @@ if Idefics3ForConditionalGeneration is not None:
         def get_lm_mlp(self, layer_idx: int) -> nn.Module:
             return self.lm_mlp[layer_idx]
 
+        def get_lm_q_proj(self, layer_idx: int) -> nn.Module:
+            return self._text_model.layers[layer_idx].self_attn.q_proj
+
+        def get_lm_k_proj(self, layer_idx: int) -> nn.Module:
+            return self._text_model.layers[layer_idx].self_attn.k_proj
+
+        def get_lm_v_proj(self, layer_idx: int) -> nn.Module:
+            return self._text_model.layers[layer_idx].self_attn.v_proj
+
+        def get_lm_gate_proj(self, layer_idx: int) -> nn.Module:
+            return self._text_model.layers[layer_idx].mlp.gate_proj
+
+        def get_lm_up_proj(self, layer_idx: int) -> nn.Module:
+            return self._text_model.layers[layer_idx].mlp.up_proj
+
+        def get_lm_down_proj(self, layer_idx: int) -> nn.Module:
+            return self._text_model.layers[layer_idx].mlp.down_proj
+
         def get_lm_norm(self) -> nn.Module:
             return self._text_model.norm
 
@@ -89,6 +108,14 @@ if Idefics3ForConditionalGeneration is not None:
                 self._text_model.config.hidden_size
                 // self._text_model.config.num_attention_heads
             )
+
+        @property
+        def lm_num_kv_heads(self) -> int:
+            return self._text_model.config.num_key_value_heads
+
+        @property
+        def lm_mlp_dim(self) -> int:
+            return self._text_model.config.intermediate_size
 
         def compute_per_head_contributions(
             self, concatenated_heads: torch.Tensor, layer: int
@@ -141,23 +168,91 @@ if Idefics3ForConditionalGeneration is not None:
             attn_outputs = attn_layer(**kwargs)
             return attn_outputs[1]
 
+        def compute_attention_scores(
+            self,
+            hidden_states: torch.Tensor,
+            layer: int,
+            attention_mask=None,
+            position_ids=None,
+            position_embeddings=None,
+        ) -> torch.Tensor:
+            """Compute pre-softmax attention scores (matches LlamaAttention.forward)."""
+            attn_layer = self.lm_attn[layer]
+
+            bsz, seq_len, _ = hidden_states.shape
+            hidden_shape = (bsz, seq_len, -1, self.lm_head_dim)
+
+            # Q, K projections (same as LlamaAttention.forward lines 236-238)
+            query_states = attn_layer.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            key_states = attn_layer.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+            # Apply RoPE (same as LlamaAttention.forward lines 240-241)
+            if position_embeddings is not None:
+                cos, sin = position_embeddings
+                query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+            # Expand K for GQA (same as eager_attention_forward line 181)
+            key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
+
+            # Compute scores (same as eager_attention_forward line 184)
+            scaling = attn_layer.scaling  # = head_dim ** -0.5
+            attn_scores = torch.matmul(query_states, key_states.transpose(2, 3)) * scaling
+
+            return attn_scores
+
         def get_image_token_id(self) -> int:
             if self.processor is None:
                 raise RuntimeError("Processor not set. Call set_processor() first.")
             return self.processor.tokenizer.convert_tokens_to_ids("<image>")
 
-        def format_cache_item(self, hook_name: str, cache_item):
-            if hook_name in {"lm_resid_pre", "lm.layer.pre"}:
+        def format_cache_item(self, hook_type: str, cache_item):
+            """Format a cache item based on hook type.
+
+            Args:
+                hook_type: Hook type like 'hook_resid_post' or 'attn.hook_pattern'
+                cache_item: The cached tensor or tuple
+            """
+            # Residual stream hooks may return tuples
+            if hook_type in {"hook_resid_pre", "hook_resid_post"}:
                 return self._unwrap_tensor(cache_item)
-            if hook_name in {"lm_resid_post", "lm.layer.post"}:
-                return self._unwrap_tensor(cache_item)
-            if hook_name in {"lm_attn_out", "lm.attn.out"}:
+            if hook_type == "attn.hook_out":
                 return cache_item.detach()
-            if hook_name in {"lm_mlp_out", "lm.mlp.out"}:
+            if hook_type == "attn.hook_q":
+                q = self._unwrap_tensor(cache_item)
+                bsz, seq_len, proj_dim = q.shape
+                head_dim = self.lm_head_dim
+                expected_heads = self.lm_num_heads
+                inferred_heads = proj_dim // head_dim
+                num_heads = (
+                    expected_heads
+                    if expected_heads * head_dim == proj_dim
+                    else inferred_heads
+                )
+                return q.reshape(bsz, seq_len, num_heads, head_dim)
+
+            if hook_type == "attn.hook_head_out":
+                return cache_item.detach()  # Already computed by compute_per_head_contributions
+            if hook_type == "attn.hook_scores":
                 return cache_item.detach()
-            if hook_name in {"lm_attn_pattern", "lm.attn.pattern"}:
+            if hook_type in {"attn.hook_k", "attn.hook_v"}:
+                kv = self._unwrap_tensor(cache_item)
+                bsz, seq_len, proj_dim = kv.shape
+                head_dim = self.lm_head_dim
+                num_kv_heads = proj_dim // head_dim
+                return kv.reshape(bsz, seq_len, num_kv_heads, head_dim)
+            if hook_type == "attn.hook_z":
+                z = self._unwrap_tensor(cache_item)
+                bsz, seq_len, proj_dim = z.shape
+                head_dim = self.lm_head_dim
+                num_heads = self.lm_num_heads
+                return z.reshape(bsz, seq_len, num_heads, head_dim)
+            if hook_type in {"mlp.hook_out", "mlp.hook_in"}:
                 return cache_item.detach()
-            return super().format_cache_item(hook_name, cache_item)
+            if hook_type in {"mlp.hook_pre", "mlp.hook_pre_linear", "mlp.hook_post"}:
+                return cache_item.detach()
+            if hook_type == "attn.hook_pattern":
+                return cache_item.detach()
+            return super().format_cache_item(hook_type, cache_item)
 
         @staticmethod
         def _unwrap_tensor(cache_item):

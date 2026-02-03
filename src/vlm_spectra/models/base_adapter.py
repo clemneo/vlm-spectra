@@ -53,6 +53,38 @@ class ModelAdapter(ABC):
     def get_lm_mlp(self, layer_idx: int) -> nn.Module:
         """Return the MLP module at index."""
 
+    # QKV projection getters (required for attn.hook_q/k/v)
+    @abstractmethod
+    def get_lm_q_proj(self, layer_idx: int) -> nn.Module:
+        """Return the query projection module at index."""
+
+    @abstractmethod
+    def get_lm_k_proj(self, layer_idx: int) -> nn.Module:
+        """Return the key projection module at index."""
+
+    @abstractmethod
+    def get_lm_v_proj(self, layer_idx: int) -> nn.Module:
+        """Return the value projection module at index."""
+
+    # MLP internal getters (optional, for mlp.hook_pre/pre_linear/post)
+    def get_lm_gate_proj(self, layer_idx: int) -> nn.Module:
+        """Return the MLP gate projection (for gated MLPs like SwiGLU)."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_lm_gate_proj"
+        )
+
+    def get_lm_up_proj(self, layer_idx: int) -> nn.Module:
+        """Return the MLP up projection."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_lm_up_proj"
+        )
+
+    def get_lm_down_proj(self, layer_idx: int) -> nn.Module:
+        """Return the MLP down projection."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_lm_down_proj"
+        )
+
     def get_lm_norm(self) -> nn.Module:
         """Return the final normalization layer if available."""
         raise NotImplementedError
@@ -78,19 +110,44 @@ class ModelAdapter(ABC):
     ) -> torch.Tensor:
         """Compute attention patterns for a given layer."""
 
-    def format_cache_item(self, hook_name: str, cache_item):
-        """Format a single cache item to a tensor."""
-        _ = hook_name
+    @abstractmethod
+    def compute_attention_scores(
+        self,
+        hidden_states: torch.Tensor,
+        layer: int,
+        attention_mask=None,
+        position_ids=None,
+        position_embeddings=None,
+    ) -> torch.Tensor:
+        """Compute pre-softmax attention scores for a given layer."""
+
+    def format_cache_item(self, hook_type: str, cache_item):
+        """Format a single cache item to a tensor.
+
+        Args:
+            hook_type: Hook type like 'hook_resid_post' or 'attn.hook_pattern'
+            cache_item: The cached tensor or tuple
+        """
+        _ = hook_type
         if isinstance(cache_item, torch.Tensor):
             return cache_item.detach()
         return cache_item
 
     def format_cache(self, cache: dict) -> dict:
         """Format raw cache into structured format."""
+        from vlm_spectra.core.hook_points import HookPoint
+
         for key, value in cache.items():
-            cache[key] = self.format_cache_item(key[0], value)
+            hook_type, _ = HookPoint.parse(key)
+            cache[key] = self.format_cache_item(hook_type, value)
         return cache
 
     @abstractmethod
     def get_image_token_id(self) -> int:
         """Get the token ID used for image patches in this model."""
+
+    @property
+    def has_strict_residual_stream(self) -> bool:
+        """Whether hook_resid_post equals next hook_resid_pre exactly."""
+
+        return True
