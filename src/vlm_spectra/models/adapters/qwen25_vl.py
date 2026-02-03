@@ -117,6 +117,15 @@ class Qwen25VLAdapter(ModelAdapter):
     def get_lm_v_proj(self, layer_idx: int) -> nn.Module:
         return self.model.language_model.layers[layer_idx].self_attn.v_proj
 
+    def get_lm_gate_proj(self, layer_idx: int) -> nn.Module:
+        return self.model.language_model.layers[layer_idx].mlp.gate_proj
+
+    def get_lm_up_proj(self, layer_idx: int) -> nn.Module:
+        return self.model.language_model.layers[layer_idx].mlp.up_proj
+
+    def get_lm_down_proj(self, layer_idx: int) -> nn.Module:
+        return self.model.language_model.layers[layer_idx].mlp.down_proj
+
     def get_lm_norm(self) -> nn.Module:
         return self.model.language_model.norm
 
@@ -141,6 +150,14 @@ class Qwen25VLAdapter(ModelAdapter):
             self.model.language_model.config.hidden_size
             // self.model.language_model.config.num_attention_heads
         )
+
+    @property
+    def lm_num_kv_heads(self) -> int:
+        return self.model.language_model.config.num_key_value_heads
+
+    @property
+    def lm_mlp_dim(self) -> int:
+        return self.model.language_model.config.intermediate_size
 
     @property
     def lm_head(self):
@@ -242,6 +259,46 @@ class Qwen25VLAdapter(ModelAdapter):
 
         return attn_weights
 
+    def compute_attention_scores(
+        self,
+        hidden_states: torch.Tensor,
+        layer: int,
+        attention_mask=None,
+        position_ids=None,
+        position_embeddings=None,
+    ) -> torch.Tensor:
+        """Compute pre-softmax attention scores using Qwen2.5-VL attention logic."""
+        _ = position_ids
+        attn_layer = self.lm_attn[layer]
+
+        bsz, q_len, _ = hidden_states.size()
+
+        query_states = attn_layer.q_proj(hidden_states)
+        key_states = attn_layer.k_proj(hidden_states)
+
+        query_states = query_states.view(bsz, q_len, -1, attn_layer.head_dim).transpose(
+            1, 2
+        )
+        key_states = key_states.view(bsz, q_len, -1, attn_layer.head_dim).transpose(1, 2)
+
+        if position_embeddings is not None:
+            cos, sin = position_embeddings
+            query_states, key_states = apply_multimodal_rotary_pos_emb(
+                query_states,
+                key_states,
+                cos,
+                sin,
+                attn_layer.rope_scaling["mrope_section"],
+            )
+
+        key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
+
+        attn_scores = torch.matmul(
+            query_states, key_states.transpose(2, 3)
+        ) / math.sqrt(attn_layer.head_dim)
+
+        return attn_scores
+
     def format_cache_item(self, hook_type: str, cache_item):
         """Format a cache item based on hook type.
 
@@ -252,10 +309,39 @@ class Qwen25VLAdapter(ModelAdapter):
         # Residual stream hooks may return tuples
         if hook_type in {"hook_resid_pre", "hook_resid_post"}:
             return self._unwrap_tensor(cache_item)
-        # Attention and MLP hooks return tensors directly
-        if hook_type in {"attn.hook_out", "attn.hook_head_out", "attn.hook_z"}:
+        if hook_type == "attn.hook_out":
             return cache_item.detach()
+        if hook_type == "attn.hook_q":
+            q = self._unwrap_tensor(cache_item)
+            bsz, seq_len, proj_dim = q.shape
+            head_dim = self.lm_head_dim
+            expected_heads = self.lm_num_heads
+            inferred_heads = proj_dim // head_dim
+            num_heads = (
+                expected_heads
+                if expected_heads * head_dim == proj_dim
+                else inferred_heads
+            )
+            return q.reshape(bsz, seq_len, num_heads, head_dim)
+        if hook_type == "attn.hook_head_out":
+            return cache_item.detach()
+        if hook_type == "attn.hook_scores":
+            return cache_item.detach()
+        if hook_type in {"attn.hook_k", "attn.hook_v"}:
+            kv = self._unwrap_tensor(cache_item)
+            bsz, seq_len, proj_dim = kv.shape
+            head_dim = self.lm_head_dim
+            num_kv_heads = proj_dim // head_dim
+            return kv.reshape(bsz, seq_len, num_kv_heads, head_dim)
+        if hook_type == "attn.hook_z":
+            z = self._unwrap_tensor(cache_item)
+            bsz, seq_len, proj_dim = z.shape
+            head_dim = self.lm_head_dim
+            num_heads = self.lm_num_heads
+            return z.reshape(bsz, seq_len, num_heads, head_dim)
         if hook_type in {"mlp.hook_out", "mlp.hook_in"}:
+            return cache_item.detach()
+        if hook_type in {"mlp.hook_pre", "mlp.hook_pre_linear", "mlp.hook_post"}:
             return cache_item.detach()
         if hook_type == "attn.hook_pattern":
             return cache_item.detach()
