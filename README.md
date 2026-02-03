@@ -111,12 +111,14 @@ Context manager for caching specific model components during forward/generate ca
 
 ```python
 # Cache attention patterns and residual outputs
-with model.run_with_cache(["lm_attn_pattern", "lm_resid_post"]):
+with model.run_with_cache(["lm.blocks.*.attn.hook_pattern", "lm.blocks.*.hook_resid_post"]) as cache:
     outputs = model.forward(inputs)
 
 # Access cached values
-attention_cache = model.cache[("lm_attn_pattern", layer_idx)]
-residual_cache = model.cache[("lm_resid_post", layer_idx)]
+attention_cache = cache["lm.blocks.5.attn.hook_pattern"]
+residual_cache = cache["lm.blocks.5.hook_resid_post"]
+# Or stack all layers
+all_residuals = cache.stack("lm.blocks.*.hook_resid_post")
 ```
 
 ### Advanced Analysis

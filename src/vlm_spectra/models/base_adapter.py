@@ -110,6 +110,17 @@ class ModelAdapter(ABC):
     ) -> torch.Tensor:
         """Compute attention patterns for a given layer."""
 
+    @abstractmethod
+    def compute_attention_scores(
+        self,
+        hidden_states: torch.Tensor,
+        layer: int,
+        attention_mask=None,
+        position_ids=None,
+        position_embeddings=None,
+    ) -> torch.Tensor:
+        """Compute pre-softmax attention scores for a given layer."""
+
     def format_cache_item(self, hook_type: str, cache_item):
         """Format a single cache item to a tensor.
 
@@ -124,8 +135,11 @@ class ModelAdapter(ABC):
 
     def format_cache(self, cache: dict) -> dict:
         """Format raw cache into structured format."""
+        from vlm_spectra.core.hook_points import HookPoint
+
         for key, value in cache.items():
-            cache[key] = self.format_cache_item(key[0], value)
+            hook_type, _ = HookPoint.parse(key)
+            cache[key] = self.format_cache_item(hook_type, value)
         return cache
 
     @abstractmethod

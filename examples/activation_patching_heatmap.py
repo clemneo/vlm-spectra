@@ -28,8 +28,7 @@ import torch
 from PIL import Image, ImageDraw
 from tqdm import tqdm
 
-from vlm_spectra import HookedVLM
-from vlm_spectra.hooks.patch_hooks import PatchResidualHook
+from vlm_spectra import HookedVLM, PatchActivation
 from vlm_spectra.preprocessing.utils.vision_info import process_vision_info
 
 
@@ -102,7 +101,7 @@ def get_activations_for_all_layers(
     Returns:
         Dictionary mapping (hook_name, layer) to activation tensors
     """
-    with model.run_with_cache(["lm.layer.post"]):
+    with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
         model.forward(inputs)
 
     # Return a copy of the cache to preserve activations
@@ -276,7 +275,7 @@ def run_activation_patching(
     num_layers = model.lm_num_layers
 
     # Determine sequence length from cached activations
-    sample_activation = corrupted_cache[("lm.layer.post", 0)]
+    sample_activation = corrupted_cache["lm.blocks.0.hook_resid_post"]
     seq_len = sample_activation.shape[1]
 
     # Default to all positions if not specified
@@ -302,18 +301,18 @@ def run_activation_patching(
         for layer_idx in range(num_layers):
             for pos_idx, token_pos in enumerate(token_positions):
                 # Get the corrupted activation at this (layer, position)
-                corrupted_activation = corrupted_cache[("lm.layer.post", layer_idx)]
+                corrupted_activation = corrupted_cache[f"lm.blocks.{layer_idx}.hook_resid_post"]
                 replacement = corrupted_activation[0, token_pos, :].clone()
 
-                # Create patch hook
-                hook = PatchResidualHook(
-                    layer=layer_idx,
-                    token_idx=token_pos,
+                # Create patch hook - PatchActivation is a callable hook function
+                hook = PatchActivation(
                     replacement=replacement,
+                    token_idx=token_pos,
                 )
+                hook_name = f"lm.blocks.{layer_idx}.hook_resid_post"
 
                 # Run forward pass with patching
-                with model.run_with_hooks([hook]):
+                with model.run_with_hooks([(hook_name, hook)]):
                     patched_logit_diff, patched_blue_prob = compute_metrics(
                         model, clean_inputs, red_token_id, blue_token_id
                     )
@@ -602,7 +601,7 @@ def main():
     corrupted_cache = get_activations_for_all_layers(model, blue_inputs)
 
     # Determine which positions to patch
-    seq_len = corrupted_cache[("lm.layer.post", 0)].shape[1]
+    seq_len = corrupted_cache["lm.blocks.0.hook_resid_post"].shape[1]
     if args.image_tokens_only:
         start, end = image_token_range
         token_positions = list(range(start, end + 1))

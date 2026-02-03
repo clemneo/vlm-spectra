@@ -348,8 +348,11 @@ class Qwen25VLAdapter(ModelAdapter):
         return super().format_cache_item(hook_type, cache_item)
 
     def format_cache(self, cache: dict) -> dict:
+        from vlm_spectra.core.hook_points import HookPoint
+
         for key, value in cache.items():
-            cache[key] = self.format_cache_item(key[0], value)
+            hook_type, _ = HookPoint.parse(key)
+            cache[key] = self.format_cache_item(hook_type, value)
         return cache
 
     def get_image_token_id(self) -> int:

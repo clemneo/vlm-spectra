@@ -134,11 +134,11 @@ def test_cache_activation_sample(model_for_manual, tmp_path):
     image = generate_checkered_image(width=56, height=56)
     inputs = model_for_manual.prepare_messages("Describe.", image)
 
-    with model_for_manual.run_with_cache(["lm_resid_post"]):
+    with model_for_manual.run_with_cache(["lm.blocks.*.hook_resid_post"]):
         model_for_manual.forward(inputs)
 
     # Get layer 0 activations
-    layer0 = model_for_manual.cache[("lm_resid_post", 0)]
+    layer0 = model_for_manual.cache["lm.blocks.0.hook_resid_post"]
 
     print(f"\n\n=== MANUAL VERIFICATION REQUIRED ===")
     print(f"Layer 0 residual post activations:")
