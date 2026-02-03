@@ -9,6 +9,8 @@ from tests.helpers.patch_hook_suites import (
     PatchHelperClassesSuite,
     PatchHookCleanupSuite,
     PatchCacheInteractionSuite,
+    PatchPreHookSuite,
+    PatchPreHookCleanupSuite,
 )
 
 
@@ -41,3 +43,11 @@ class TestHookCleanup(PatchHookCleanupSuite):
 
 class TestCacheAndHooksInteraction(PatchCacheInteractionSuite):
     """Exercise cache + patch interactions for every acceptance model."""
+
+
+class TestPreHookPatching(PatchPreHookSuite):
+    """Run pre-hook patching tests on acceptance models."""
+
+
+class TestPreHookCleanup(PatchPreHookCleanupSuite):
+    """Ensure pre-hook cleanup works across acceptance models."""

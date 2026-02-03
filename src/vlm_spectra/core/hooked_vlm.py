@@ -193,18 +193,32 @@ class HookedVLM:
                 - hook_fn: Callable with signature (module, args, kwargs, output) -> output | None
                   Return modified output, or None to keep original.
 
-        Valid hook points (post-hooks only, no virtual hooks):
+        Valid hook points (post-hooks, no virtual hooks):
             - hook_resid_post: layer output
             - attn.hook_q, attn.hook_k, attn.hook_v: QKV projections
             - attn.hook_out: attention output
             - mlp.hook_pre, mlp.hook_pre_linear: gate/up projections
             - mlp.hook_out: MLP output
 
+        Valid pre-hook points (for head-level patching):
+            - attn.hook_z: pre o_proj, use with PatchHead for individual head patching
+
         Example:
             def scale_hook(module, args, kwargs, output):
                 return output * 0.5
 
             with model.run_with_hooks([('lm.blocks.5.hook_resid_post', scale_hook)]):
+                model.forward(inputs)
+
+        Example with PatchHead (head-level patching):
+            from vlm_spectra.core.patch_hooks import PatchHead
+
+            num_heads = model.adapter.lm_num_heads
+            head_dim = model.adapter.lm_head_dim
+            replacement = torch.zeros(head_dim, device=model.device)
+
+            patch = PatchHead(head_idx=0, replacement=replacement, num_heads=num_heads)
+            with model.run_with_hooks([("lm.blocks.5.attn.hook_z", patch)]):
                 model.forward(inputs)
 
         Yields:

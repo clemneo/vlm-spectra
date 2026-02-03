@@ -8,7 +8,7 @@ from torch.utils.hooks import RemovableHandle
 
 from vlm_spectra.core.activation_cache import ActivationCache
 from vlm_spectra.core.hook_points import HookPoint
-from vlm_spectra.core.patch_hooks import HookFn, validate_patch_hook_type
+from vlm_spectra.core.patch_hooks import validate_patch_hook_type
 
 from vlm_spectra.models.base_adapter import ModelAdapter
 
@@ -111,8 +111,7 @@ class HookManager:
                   Return modified output, or None to keep original.
 
         Raises:
-            ValueError: If hook_type is a pre-hook or virtual hook (only post-hooks
-                that capture actual module outputs can be used for patching)
+            ValueError: If hook_type is a virtual hook or an unsupported pre-hook
 
         Example:
             def zero_hook(module, args, kwargs, output):
@@ -121,6 +120,7 @@ class HookManager:
             manager.register_patch_hooks([
                 ('lm.blocks.5.hook_resid_post', zero_hook),
                 ('lm.blocks.*.mlp.hook_out', ScaleActivation(0.5)),
+                ('lm.blocks.5.attn.hook_z', PatchHead(...)),  # Pre-hook patching
             ])
         """
         if self._patch_handles:
@@ -133,7 +133,7 @@ class HookManager:
 
             for full_name in expanded_names:
                 hook_type, layer = HookPoint.parse(full_name)
-                validate_patch_hook_type(hook_type)
+                is_pre = validate_patch_hook_type(hook_type)
 
                 module_getter = HookPoint.get_module_getter(hook_type)
                 getter_fn = getattr(self._adapter, module_getter, None)
@@ -143,16 +143,26 @@ class HookManager:
                     )
                 module = getter_fn(layer)
 
-                wrapped_fn = self._wrap_patch_hook(hook_fn)
-                registrations.append((module, wrapped_fn))
+                if is_pre:
+                    wrapped_fn = self._wrap_pre_patch_hook(hook_fn)
+                else:
+                    wrapped_fn = self._wrap_patch_hook(hook_fn)
+                registrations.append((module, wrapped_fn, is_pre))
 
         # Register in reverse so prepend=True preserves caller order
-        for module, wrapped_fn in reversed(registrations):
-            handle = module.register_forward_hook(
-                wrapped_fn,
-                with_kwargs=True,
-                prepend=True,
-            )
+        for module, wrapped_fn, is_pre in reversed(registrations):
+            if is_pre:
+                handle = module.register_forward_pre_hook(
+                    wrapped_fn,
+                    with_kwargs=True,
+                    prepend=True,
+                )
+            else:
+                handle = module.register_forward_hook(
+                    wrapped_fn,
+                    with_kwargs=True,
+                    prepend=True,
+                )
             self._patch_handles.append(handle)
 
     def finalize_cache(self, cache: ActivationCache, names: List[str]) -> None:
@@ -341,5 +351,56 @@ class HookManager:
             if is_tuple:
                 return (result,) + output[1:]
             return result
+
+        return wrapper
+
+    def _wrap_pre_patch_hook(
+        self,
+        hook_fn: Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]],
+    ):
+        """Wrap a patch hook for pre-hook registration.
+
+        Pre-hooks receive (module, args, kwargs) and return modified (args, kwargs).
+        This wrapper extracts tensor from args[0], calls hook_fn with unified
+        signature (module, args, kwargs, tensor), then puts result back into args.
+        """
+        def wrapper(module: nn.Module, args: tuple, kwargs: dict):
+            # Extract tensor from args[0] or kwargs["hidden_states"]
+            if len(args) > 0:
+                original_arg = args[0]
+                is_tuple = isinstance(original_arg, tuple)
+                tensor = original_arg[0] if is_tuple else original_arg
+                from_kwargs = False
+            elif "hidden_states" in kwargs:
+                tensor = kwargs["hidden_states"]
+                is_tuple = isinstance(tensor, tuple)
+                if is_tuple:
+                    tensor = tensor[0]
+                from_kwargs = True
+            else:
+                # No tensor found, skip patching
+                return None
+
+            # Call user hook with unified signature
+            result = hook_fn(module, args, kwargs, tensor)
+
+            if result is None:
+                # No modification
+                return None
+
+            # Put result back into args or kwargs
+            if from_kwargs:
+                new_kwargs = dict(kwargs)
+                if is_tuple:
+                    new_kwargs["hidden_states"] = (result,) + kwargs["hidden_states"][1:]
+                else:
+                    new_kwargs["hidden_states"] = result
+                return args, new_kwargs
+            else:
+                if is_tuple:
+                    new_arg = (result,) + original_arg[1:]
+                else:
+                    new_arg = result
+                return (new_arg,) + args[1:], kwargs
 
         return wrapper

@@ -27,39 +27,54 @@ VALID_PATCH_HOOK_TYPES: Set[str] = {
     "mlp.hook_out",
 }
 
+# Valid pre-hook types for patching (is_pre=True but patchable)
+VALID_PRE_PATCH_HOOK_TYPES: Set[str] = {
+    "attn.hook_z",
+}
 
-def validate_patch_hook_type(hook_type: str) -> None:
+
+def validate_patch_hook_type(hook_type: str) -> bool:
     """Validate that a hook type can be used for patching.
 
     Patch hooks can only be registered on hook points that are:
-    - Not pre-hooks (we need access to the output)
+    - Post-hooks (standard patching) OR
+    - Specific pre-hooks that support patching (e.g., attn.hook_z for head patching)
     - Not virtual hooks (they require computation, not direct capture)
 
     Args:
         hook_type: The hook type to validate (e.g., 'hook_resid_post')
 
+    Returns:
+        True if this is a pre-hook that supports patching, False for post-hooks
+
     Raises:
         ValueError: If the hook type is invalid for patching
     """
-    if hook_type not in VALID_PATCH_HOOK_TYPES:
-        # Provide helpful error messages for common mistakes
-        pre_hooks = {"hook_resid_pre", "attn.hook_in", "attn.hook_z", "mlp.hook_in", "mlp.hook_post"}
-        virtual_hooks = {"attn.hook_scores", "attn.hook_pattern", "attn.hook_head_out", "hook_resid_mid"}
+    if hook_type in VALID_PATCH_HOOK_TYPES:
+        return False  # Post-hook
 
-        if hook_type in pre_hooks:
-            raise ValueError(
-                f"Hook type '{hook_type}' is a pre-hook and cannot be used for patching. "
-                f"Pre-hooks capture inputs, not outputs. Valid hook types: {sorted(VALID_PATCH_HOOK_TYPES)}"
-            )
-        elif hook_type in virtual_hooks:
-            raise ValueError(
-                f"Hook type '{hook_type}' is a virtual hook and cannot be used for patching. "
-                f"Virtual hooks are computed from other activations. Valid hook types: {sorted(VALID_PATCH_HOOK_TYPES)}"
-            )
-        else:
-            raise ValueError(
-                f"Unknown hook type '{hook_type}'. Valid hook types for patching: {sorted(VALID_PATCH_HOOK_TYPES)}"
-            )
+    if hook_type in VALID_PRE_PATCH_HOOK_TYPES:
+        return True  # Pre-hook that supports patching
+
+    # Provide helpful error messages for common mistakes
+    all_valid = sorted(VALID_PATCH_HOOK_TYPES | VALID_PRE_PATCH_HOOK_TYPES)
+    pre_hooks = {"hook_resid_pre", "attn.hook_in", "mlp.hook_in", "mlp.hook_post"}
+    virtual_hooks = {"attn.hook_scores", "attn.hook_pattern", "attn.hook_head_out", "hook_resid_mid"}
+
+    if hook_type in pre_hooks:
+        raise ValueError(
+            f"Hook type '{hook_type}' is a pre-hook and cannot be used for patching. "
+            f"Pre-hooks capture inputs, not outputs. Valid hook types: {all_valid}"
+        )
+    elif hook_type in virtual_hooks:
+        raise ValueError(
+            f"Hook type '{hook_type}' is a virtual hook and cannot be used for patching. "
+            f"Virtual hooks are computed from other activations. Valid hook types: {all_valid}"
+        )
+    else:
+        raise ValueError(
+            f"Unknown hook type '{hook_type}'. Valid hook types for patching: {all_valid}"
+        )
 
 
 def _select_output_tensor(output: Union[torch.Tensor, tuple]) -> torch.Tensor:
@@ -230,6 +245,16 @@ class PatchHead:
     This is designed for use with attn.hook_z (pre o_proj) where the tensor
     has shape [batch, seq, num_heads * head_dim]. The tensor is reshaped to
     [batch, seq, num_heads, head_dim], patched, then reshaped back.
+
+    Example:
+        # Use adapter properties for num_heads and head_dim
+        num_heads = model.adapter.lm_num_heads
+        head_dim = model.adapter.lm_head_dim
+        replacement = torch.zeros(head_dim, device=model.device)
+
+        patch = PatchHead(head_idx=0, replacement=replacement, num_heads=num_heads)
+        with model.run_with_hooks([("lm.blocks.5.attn.hook_z", patch)]):
+            model.forward(inputs)
 
     Args:
         head_idx: Index of the head to patch
