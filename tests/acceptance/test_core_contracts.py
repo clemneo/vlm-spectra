@@ -21,8 +21,6 @@ def generate_random_image(width=56, height=56, seed=None):
 class ZeroingHook:
     """Hook that zeros out layer output."""
 
-    hook_point = "lm.layer.post"
-
     def __init__(self, layer):
         self.layer = layer
 
@@ -96,7 +94,7 @@ class TestCoreContracts:
         original = model.forward(inputs).logits.clone()
 
         hook = ZeroingHook(layer=0)
-        with model.run_with_hooks([hook]):
+        with model.run_with_hooks([("lm.blocks.0.hook_resid_post", hook)]):
             modified = model.forward(inputs).logits
 
         assert not torch.allclose(original, modified, atol=1e-3)
