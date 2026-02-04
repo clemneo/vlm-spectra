@@ -69,6 +69,38 @@ class TestCacheCorrectness:
             diff = torch.abs(cache_on_device - hf_attn).mean()
             assert diff < tolerance, f"Layer {layer_idx}: diff={diff:.6f} > {tolerance}"
 
+    def test_attn_scores_match_attentions(self, model):
+        """Softmax(attn.hook_scores + mask) should equal HuggingFace attentions."""
+        model.model.eval()
+        image = generate_random_image()
+        inputs = model.prepare_messages("Describe the image.", image)
+
+        hooks = ["lm.blocks.*.attn.hook_scores"]
+        with model.run_with_cache(hooks):
+            model.forward(inputs)
+
+        outputs = model.forward(inputs, output_attentions=True)
+        tolerance = 2e-3
+
+        input_cache = getattr(model._hook_manager, "_input_cache", {})
+
+        for layer_idx in range(model.adapter.lm_num_layers):
+            key = f"lm.blocks.{layer_idx}.attn.hook_scores"
+            attn_scores = model.cache[key]
+            hf_attn = outputs.attentions[layer_idx].to(attn_scores.device)
+
+            hook_inputs = input_cache.get(key, {})
+            attention_mask = hook_inputs.get("attention_mask") if isinstance(hook_inputs, dict) else None
+
+            attn_scores_with_mask = attn_scores
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(attn_scores.device, attn_scores.dtype)
+                attn_scores_with_mask = attn_scores_with_mask + attention_mask
+
+            attn_probs = torch.softmax(attn_scores_with_mask, dim=-1)
+            diff = torch.abs(attn_probs - hf_attn).mean()
+            assert diff < tolerance, f"Layer {layer_idx}: diff={diff:.6f} > {tolerance}"
+
     def test_cache_shapes_match_hf_shapes(self, model):
         """Cached activation shapes should match HuggingFace shapes."""
         image = generate_random_image()

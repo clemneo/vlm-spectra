@@ -38,6 +38,16 @@ MODEL_CAPABILITIES = {
         # Qwen3-VL uses deepstack which modifies hidden states in-place after layers
         "strict_residual_stream": False,
     },
+    "llava-hf/llava-1.5-7b-hf": {
+        "contiguous_image_tokens": True,
+        "supports_batching": True,
+        "strict_residual_stream": True,
+    },
+    "llava-hf/llava-1.5-13b-hf": {
+        "contiguous_image_tokens": True,
+        "supports_batching": True,
+        "strict_residual_stream": True,
+    },
 }
 
 MODEL_ALIASES = {
@@ -46,6 +56,8 @@ MODEL_ALIASES = {
     "smolvlm-256m": "HuggingFaceTB/SmolVLM-256M-Instruct",
     "smolvlm-500m": "HuggingFaceTB/SmolVLM-500M-Instruct",
     "smolvlm-2b": "HuggingFaceTB/SmolVLM-Instruct",
+    "llava-7b": "llava-hf/llava-1.5-7b-hf",
+    "llava-13b": "llava-hf/llava-1.5-13b-hf",
 }
 
 

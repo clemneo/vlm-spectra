@@ -8,51 +8,49 @@ from transformers import AutoProcessor
 from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, repeat_kv
 
 try:
-    from transformers import Idefics3ForConditionalGeneration
+    from transformers import LlavaForConditionalGeneration
 except ImportError:
-    Idefics3ForConditionalGeneration = None
+    LlavaForConditionalGeneration = None
 
-if Idefics3ForConditionalGeneration is not None:
+if LlavaForConditionalGeneration is not None:
     from vlm_spectra.models.base_adapter import ModelAdapter
     from vlm_spectra.models.registry import ModelRegistry
 
-    @ModelRegistry.register("smolvlm")
-    class SmolVLMAdapter(ModelAdapter):
+    @ModelRegistry.register("llava")
+    class LlavaAdapter(ModelAdapter):
         SUPPORTED_MODELS = [
-            "HuggingFaceTB/SmolVLM-Instruct",
-            "HuggingFaceTB/SmolVLM-256M-Instruct",
-            "HuggingFaceTB/SmolVLM-500M-Instruct",
+            "llava-hf/llava-1.5-7b-hf",
+            "llava-hf/llava-1.5-13b-hf",
         ]
 
-        MODEL_CLASS = Idefics3ForConditionalGeneration
+        MODEL_CLASS = LlavaForConditionalGeneration
         PROCESSOR_CLASS = AutoProcessor
 
         def __init__(self, model: nn.Module) -> None:
             super().__init__(model)
-            self._text_model = model.model.text_model
-            # TODO: Only set eager attention when output_attentions=True is requested,
-            # then restore the original implementation afterwards. Currently we always
-            # use eager which is slower but supports attention output.
+            self._language_model = model.language_model
             if hasattr(self.model, "set_attn_implementation"):
                 self.model.set_attn_implementation("eager")
 
         @property
         def lm_layers(self):
-            return self._text_model.layers
+            return self._language_model.layers
 
         @property
         def lm_attn(self):
-            return ModuleList([layer.self_attn for layer in self._text_model.layers])
+            return ModuleList(
+                [layer.self_attn for layer in self._language_model.layers]
+            )
 
         @property
         def lm_o_proj(self):
             return ModuleList(
-                [layer.self_attn.o_proj for layer in self._text_model.layers]
+                [layer.self_attn.o_proj for layer in self._language_model.layers]
             )
 
         @property
         def lm_mlp(self):
-            return ModuleList([layer.mlp for layer in self._text_model.layers])
+            return ModuleList([layer.mlp for layer in self._language_model.layers])
 
         def get_lm_layer(self, layer_idx: int) -> nn.Module:
             return self.lm_layers[layer_idx]
@@ -67,55 +65,55 @@ if Idefics3ForConditionalGeneration is not None:
             return self.lm_mlp[layer_idx]
 
         def get_lm_q_proj(self, layer_idx: int) -> nn.Module:
-            return self._text_model.layers[layer_idx].self_attn.q_proj
+            return self._language_model.layers[layer_idx].self_attn.q_proj
 
         def get_lm_k_proj(self, layer_idx: int) -> nn.Module:
-            return self._text_model.layers[layer_idx].self_attn.k_proj
+            return self._language_model.layers[layer_idx].self_attn.k_proj
 
         def get_lm_v_proj(self, layer_idx: int) -> nn.Module:
-            return self._text_model.layers[layer_idx].self_attn.v_proj
+            return self._language_model.layers[layer_idx].self_attn.v_proj
 
         def get_lm_gate_proj(self, layer_idx: int) -> nn.Module:
-            return self._text_model.layers[layer_idx].mlp.gate_proj
+            return self._language_model.layers[layer_idx].mlp.gate_proj
 
         def get_lm_up_proj(self, layer_idx: int) -> nn.Module:
-            return self._text_model.layers[layer_idx].mlp.up_proj
+            return self._language_model.layers[layer_idx].mlp.up_proj
 
         def get_lm_down_proj(self, layer_idx: int) -> nn.Module:
-            return self._text_model.layers[layer_idx].mlp.down_proj
+            return self._language_model.layers[layer_idx].mlp.down_proj
 
         def get_lm_norm(self) -> nn.Module:
-            return self._text_model.norm
+            return self._language_model.norm
 
         def get_lm_head(self) -> nn.Module:
             return self.model.lm_head
 
         @property
         def lm_num_layers(self) -> int:
-            return self._text_model.config.num_hidden_layers
+            return self._language_model.config.num_hidden_layers
 
         @property
         def lm_num_heads(self) -> int:
-            return self._text_model.config.num_attention_heads
+            return self._language_model.config.num_attention_heads
 
         @property
         def lm_hidden_dim(self) -> int:
-            return self._text_model.config.hidden_size
+            return self._language_model.config.hidden_size
 
         @property
         def lm_head_dim(self) -> int:
             return (
-                self._text_model.config.hidden_size
-                // self._text_model.config.num_attention_heads
+                self._language_model.config.hidden_size
+                // self._language_model.config.num_attention_heads
             )
 
         @property
         def lm_num_kv_heads(self) -> int:
-            return self._text_model.config.num_key_value_heads
+            return self._language_model.config.num_key_value_heads
 
         @property
         def lm_mlp_dim(self) -> int:
-            return self._text_model.config.intermediate_size
+            return self._language_model.config.intermediate_size
 
         def compute_per_head_contributions(
             self, concatenated_heads: torch.Tensor, layer: int
@@ -182,9 +180,12 @@ if Idefics3ForConditionalGeneration is not None:
             bsz, seq_len, _ = hidden_states.shape
             hidden_shape = (bsz, seq_len, -1, self.lm_head_dim)
 
-            # Q, K projections (same as LlamaAttention.forward lines 236-238)
-            query_states = attn_layer.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-            key_states = attn_layer.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            query_states = (
+                attn_layer.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            )
+            key_states = (
+                attn_layer.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            )
 
             # Apply RoPE if position_embeddings provided.
             # Note: In transformers 4.50+, LlamaModel precomputes position_embeddings
@@ -193,30 +194,24 @@ if Idefics3ForConditionalGeneration is not None:
             # will always be present when hooks capture layer inputs.
             if position_embeddings is not None:
                 cos, sin = position_embeddings
-                query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+                query_states, key_states = apply_rotary_pos_emb(
+                    query_states, key_states, cos, sin
+                )
 
-            # Expand K for GQA (same as eager_attention_forward line 181)
             key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
 
-            # Compute scores (same as eager_attention_forward line 184)
-            scaling = attn_layer.scaling  # = head_dim ** -0.5
-            attn_scores = torch.matmul(query_states, key_states.transpose(2, 3)) * scaling
+            scaling = attn_layer.scaling
+            attn_scores = (
+                torch.matmul(query_states, key_states.transpose(2, 3)) * scaling
+            )
 
             return attn_scores
 
         def get_image_token_id(self) -> int:
-            if self.processor is None:
-                raise RuntimeError("Processor not set. Call set_processor() first.")
-            return self.processor.tokenizer.convert_tokens_to_ids("<image>")
+            return self.model.config.image_token_index
 
         def format_cache_item(self, hook_type: str, cache_item):
-            """Format a cache item based on hook type.
-
-            Args:
-                hook_type: Hook type like 'hook_resid_post' or 'attn.hook_pattern'
-                cache_item: The cached tensor or tuple
-            """
-            # Residual stream hooks may return tuples
+            """Format a cache item based on hook type."""
             if hook_type in {"hook_resid_pre", "hook_resid_post"}:
                 return self._unwrap_tensor(cache_item)
             if hook_type == "attn.hook_out":
@@ -235,7 +230,7 @@ if Idefics3ForConditionalGeneration is not None:
                 return q.reshape(bsz, seq_len, num_heads, head_dim)
 
             if hook_type == "attn.hook_head_out":
-                return cache_item.detach()  # Already computed by compute_per_head_contributions
+                return cache_item.detach()
             if hook_type == "attn.hook_scores":
                 return cache_item.detach()
             if hook_type in {"attn.hook_k", "attn.hook_v"}:
