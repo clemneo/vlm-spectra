@@ -25,3 +25,5 @@ src/vlm_spectra/web_app/static/uploads/
 
 # MacOS
 .DS_Store
+
+examples/results/
