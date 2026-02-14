@@ -187,6 +187,27 @@ def compute_answer_rank(
     return rank
 
 
+def recompute_cached_ranks(result: dict, prob_threshold: float) -> None:
+    """Recompute cached ranks for a new probability threshold."""
+    stored_counts = result.get("number_counts", {})
+    if not stored_counts:
+        return
+
+    filtered_counts: dict[int, list[float]] = {}
+    for num_str, probs in stored_counts.items():
+        filtered = [p for p in probs if p >= prob_threshold]
+        if filtered:
+            filtered_counts[int(num_str)] = filtered
+
+    unfiltered_counts = {int(k): v for k, v in stored_counts.items()}
+    model_answer = result.get("model_answer")
+    result["rank_unfiltered"] = compute_answer_rank(
+        unfiltered_counts, model_answer
+    )
+    result["rank_filtered"] = compute_answer_rank(filtered_counts, model_answer)
+    result["prob_threshold"] = prob_threshold
+
+
 def create_rank_histogram(
     ranks: list[int],
     title: str,
@@ -388,26 +409,7 @@ def main():
                 result = json.load(f)
 
             # Re-filter number_counts at new threshold from stored probabilities
-            stored_counts = result.get("number_counts", {})
-            if stored_counts:
-                # Recompute filtered counts from stored per-number probability lists
-                filtered_counts: dict[int, list[float]] = {}
-                for num_str, probs in stored_counts.items():
-                    filtered = [p for p in probs if p >= args.prob_threshold]
-                    if filtered:
-                        filtered_counts[int(num_str)] = filtered
-
-                # Unfiltered counts use all probabilities (threshold=0)
-                unfiltered_counts = {int(k): v for k, v in stored_counts.items()}
-
-                model_answer = result.get("model_answer")
-                result["rank_unfiltered"] = compute_answer_rank(
-                    unfiltered_counts, model_answer
-                )
-                result["rank_filtered"] = compute_answer_rank(
-                    filtered_counts, model_answer
-                )
-                result["prob_threshold"] = args.prob_threshold
+            recompute_cached_ranks(result, args.prob_threshold)
 
             results.append(result)
 
@@ -451,6 +453,7 @@ def main():
             if result_path.exists():
                 with open(result_path) as f:
                     result = json.load(f)
+                recompute_cached_ranks(result, args.prob_threshold)
                 results.append(result)
                 continue
 
