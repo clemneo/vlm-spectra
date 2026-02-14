@@ -30,6 +30,7 @@ test = [
 examples = [
     "matplotlib>=3.7",
     "tqdm>=4.65",
+    "datasets>=2.14",
 ]
 dev = [
     "jupyter>=1.1.1",
