@@ -45,7 +45,7 @@ def test_patch_overview_image(model_for_manual, tmp_path):
        - [ ] Patches align with image content
     """
     image = generate_checkered_image(width=224, height=224)
-    result = model_for_manual.generate_patch_overview(image, with_labels=True)
+    result = model_for_manual.generate_patch_overview(image, labels="every_10")
 
     output_path = tmp_path / "patch_overview_test.png"
     result.save(output_path)
@@ -73,7 +73,7 @@ def test_patch_overview_no_labels(model_for_manual, tmp_path):
        - [ ] Image content is clearly visible through grid
     """
     image = generate_checkered_image(width=224, height=224)
-    result = model_for_manual.generate_patch_overview(image, with_labels=False)
+    result = model_for_manual.generate_patch_overview(image, labels="none")
 
     output_path = tmp_path / "patch_overview_no_labels.png"
     result.save(output_path)
@@ -181,7 +181,7 @@ def test_photo_image_patch_overview(model_for_manual, tmp_path):
             ]
     image = Image.fromarray(arr)
 
-    result = model_for_manual.generate_patch_overview(image, with_labels=True)
+    result = model_for_manual.generate_patch_overview(image, labels="every_10")
 
     output_path = tmp_path / "gradient_patch_overview.png"
     result.save(output_path)

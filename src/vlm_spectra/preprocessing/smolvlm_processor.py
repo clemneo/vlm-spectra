@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from PIL import Image
 
 from vlm_spectra.preprocessing.base_processor import BaseProcessor
+
+if TYPE_CHECKING:
+    from vlm_spectra.preprocessing.spatial import ImageInfo
 
 
 class SmolVLMProcessor(BaseProcessor):
@@ -110,6 +113,9 @@ class SmolVLMProcessor(BaseProcessor):
         if return_text:
             return inputs, batch_texts
         return inputs
+
+    def process_image(self, image: Image.Image) -> "ImageInfo":
+        raise NotImplementedError("process_image not yet supported for SmolVLM")
 
     def _render_prompt(
         self,
