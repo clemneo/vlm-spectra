@@ -142,6 +142,13 @@ class TestCalcOverlay:
         with pytest.raises(ValueError):
             info.calc_overlay()
 
+    def test_cannot_provide_both(self):
+        """Raises if both bbox and mask provided."""
+        info = _make_info()
+        mask = np.zeros((info.processed_size[1], info.processed_size[0]), dtype=bool)
+        with pytest.raises(ValueError, match="not both"):
+            info.calc_overlay(bbox=(0, 0, 28, 28), mask=mask)
+
 
 class TestLlavaProcessImage:
     """Tests for LlavaProcessor.process_image (no GPU needed)."""

@@ -149,6 +149,8 @@ class ImageInfo:
         """
         if bbox is None and mask is None:
             raise ValueError("Must provide either bbox or mask")
+        if bbox is not None and mask is not None:
+            raise ValueError("Must provide either bbox or mask, not both")
 
         eps = self.effective_patch_size
         proc_w, proc_h = self.processed_size

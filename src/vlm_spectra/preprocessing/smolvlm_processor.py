@@ -115,7 +115,12 @@ class SmolVLMProcessor(BaseProcessor):
         return inputs
 
     def process_image(self, image: Image.Image) -> "ImageInfo":
-        raise NotImplementedError("process_image not yet supported for SmolVLM")
+        raise NotImplementedError(
+            "process_image not yet supported for SmolVLM. "
+            "SmolVLM splits images into multiple sub-tiles, each processed "
+            "independently, which is incompatible with the current ImageInfo "
+            "design that assumes a single contiguous patch grid."
+        )
 
     def _render_prompt(
         self,
