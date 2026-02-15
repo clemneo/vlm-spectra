@@ -232,3 +232,44 @@ vis_all_labels = generate_patch_overview(
 ImageDraw.Draw(vis_all_labels).rectangle([cx1, cy1, cx2, cy2], outline=(0, 255, 0), width=2)
 vis_all_labels.save(output_dir / "5_grid_highlight_all_labels.png")
 print(f"Saved {output_dir / '5_grid_highlight_all_labels.png'}")
+
+# %% [markdown]
+# ## LLaVA Processor Demo
+#
+# The same spatial utilities work with LLaVA's different preprocessing pipeline.
+# LLaVA resizes the shortest edge to 224 and center-crops to 224×224, producing
+# a fixed 16×16 patch grid (no spatial merging).
+
+# %%
+from vlm_spectra.preprocessing.llava_processor import LlavaProcessor
+
+llava_proc = LlavaProcessor(hf_processor=None)
+llava_info: ImageInfo = llava_proc.process_image(screen)
+
+print("=== LLaVA Processor ===")
+print(f"Original size:   {llava_info.original_size}")
+print(f"Processed size:  {llava_info.processed_size}")
+print(f"Grid (h x w):    {llava_info.grid_h} x {llava_info.grid_w}")
+print(f"Effective patch:  {llava_info.effective_patch_size}px")
+print(f"Num patches:     {llava_info.num_patches}")
+print(f"Crop box:        {llava_info.crop_box}")
+
+# %%
+# Correct the button bbox and find overlapping patches (LLaVA)
+llava_corrected_btn = llava_info.correct_bbox(BUTTON_BBOX)
+print(f"\nButton bbox (original):  {BUTTON_BBOX}")
+print(f"Button bbox (corrected): {tuple(round(v, 1) for v in llava_corrected_btn.bbox)}")
+print(f"Clipped: {llava_corrected_btn.clipped}")
+
+if llava_corrected_btn.bbox != (0.0, 0.0, 0.0, 0.0):
+    llava_overlap_btn = llava_info.calc_overlay(bbox=llava_corrected_btn.bbox)
+    print(f"Overlapping patches: {llava_overlap_btn.patch_indices}")
+    print(f"Overlap fractions:   {[round(f, 3) for f in llava_overlap_btn.overlap_fractions]}")
+else:
+    print("Button is outside the crop region")
+
+# %%
+# Generate patch overview for LLaVA
+llava_overview = generate_patch_overview(llava_info, labels="every_10")
+llava_overview.save(output_dir / "6_llava_grid.png")
+print(f"Saved {output_dir / '6_llava_grid.png'}")

@@ -141,3 +141,66 @@ class TestCalcOverlay:
         info = _make_info()
         with pytest.raises(ValueError):
             info.calc_overlay()
+
+
+class TestLlavaProcessImage:
+    """Tests for LlavaProcessor.process_image (no GPU needed)."""
+
+    def _make_processor(self):
+        from vlm_spectra.preprocessing.llava_processor import LlavaProcessor
+        return LlavaProcessor(hf_processor=None)
+
+    def test_square_image(self):
+        """Square image: no cropping needed, crop_box is None."""
+        proc = self._make_processor()
+        img = Image.new("RGB", (500, 500), (128, 128, 128))
+        info = proc.process_image(img)
+
+        assert info.processed_size == (224, 224)
+        assert info.original_size == (500, 500)
+        assert info.grid_h == 16
+        assert info.grid_w == 16
+        assert info.num_patches == 256
+        assert info.patch_size == 14
+        assert info.spatial_merge_size == 1
+        assert info.crop_box is None
+
+    def test_landscape_image(self):
+        """Landscape image: horizontal center crop."""
+        proc = self._make_processor()
+        img = Image.new("RGB", (800, 400), (128, 128, 128))
+        info = proc.process_image(img)
+
+        assert info.processed_size == (224, 224)
+        assert info.grid_h == 16
+        assert info.grid_w == 16
+        # Landscape → crop_box should exist (horizontal crop)
+        assert info.crop_box is not None
+        x1, y1, x2, y2 = info.crop_box
+        # y should span full height (no vertical crop)
+        assert y1 == 0
+        assert y2 == 400
+        # x should be centered
+        assert x1 > 0
+        assert x2 < 800
+        assert x2 - x1 < 800  # cropped horizontally
+
+    def test_portrait_image(self):
+        """Portrait image: vertical center crop."""
+        proc = self._make_processor()
+        img = Image.new("RGB", (400, 800), (128, 128, 128))
+        info = proc.process_image(img)
+
+        assert info.processed_size == (224, 224)
+        assert info.grid_h == 16
+        assert info.grid_w == 16
+        # Portrait → crop_box should exist (vertical crop)
+        assert info.crop_box is not None
+        x1, y1, x2, y2 = info.crop_box
+        # x should span full width (no horizontal crop)
+        assert x1 == 0
+        assert x2 == 400
+        # y should be centered
+        assert y1 > 0
+        assert y2 < 800
+        assert y2 - y1 < 800  # cropped vertically
