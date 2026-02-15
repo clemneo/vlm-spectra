@@ -228,7 +228,7 @@ print(f"\nLogit lens HTML saved to {output_dir}/")
 
 # %%
 # Generate patch overview
-patch_overview = model.generate_patch_overview(image, with_labels=True)
+patch_overview = model.generate_patch_overview(image, labels="every_10")
 
 # Save or display the patch overview
 patch_overview.save(output_dir / "patch_overview.png")

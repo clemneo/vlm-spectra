@@ -4,7 +4,7 @@ from contextlib import contextmanager, nullcontext
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import torch
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from vlm_spectra.core.activation_cache import ActivationCache
 from vlm_spectra.core.hook_manager import HookManager
@@ -14,13 +14,11 @@ from vlm_spectra.preprocessing.prompts import default_prompt_for_model
 from vlm_spectra.preprocessing.llava_processor import LlavaProcessor
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
 from vlm_spectra.preprocessing.smolvlm_processor import SmolVLMProcessor
+from vlm_spectra.preprocessing.spatial import ImageInfo
 from vlm_spectra.preprocessing.utils.vision_info import (
     IMAGE_FACTOR,
-    MAX_PIXELS,
-    MIN_PIXELS,
     process_vision_info,
     resolve_patch_params,
-    smart_resize,
 )
 
 
@@ -76,9 +74,19 @@ class HookedVLM:
         elif "llava" in model_name.lower():
             processor = LlavaProcessor(hf_processor, default_prompt=default_prompt)
         else:
-            image_factor = cls._resolve_image_factor(model)
+            config = getattr(model, "config", None)
+            vision_config = getattr(config, "vision_config", None)
+            model_name_cfg = getattr(config, "name_or_path", None)
+            patch_size, spatial_merge_size = resolve_patch_params(
+                vision_config, model_name_cfg
+            )
+            image_factor = patch_size * spatial_merge_size
             processor = QwenProcessor(
-                hf_processor, default_prompt=default_prompt, image_factor=image_factor
+                hf_processor,
+                default_prompt=default_prompt,
+                image_factor=image_factor,
+                patch_size=patch_size,
+                spatial_merge_size=spatial_merge_size,
             )
         instance = cls(model, processor, adapter, device=device)
         instance.model_name = model_name
@@ -152,6 +160,10 @@ class HookedVLM:
             return_text=return_text,
             **kwargs,
         )
+
+    def process_image(self, image: Image.Image) -> ImageInfo:
+        """Process an image and return spatial metadata with correction utilities."""
+        return self._processor.process_image(image)
 
     @contextmanager
     def run_with_cache(self, cache_names: List[str]):
@@ -267,88 +279,13 @@ class HookedVLM:
 
         return start_index, end_index
 
-    def generate_patch_overview(
-        self, image: Image.Image, with_labels: bool = True, start_number: int = 1
-    ) -> Image.Image:
-        width, height = image.size
-
-        vision_config = self.model.config.vision_config
-        model_name = getattr(self.model.config, "name_or_path", None)
-        patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
-        resized_height, resized_width = smart_resize(
-            height,
-            width,
-            factor=patch_size * spatial_merge_size,
-            min_pixels=MIN_PIXELS,
-            max_pixels=MAX_PIXELS,
+    def generate_patch_overview(self, image: Image.Image, **kwargs) -> Image.Image:
+        from vlm_spectra.visualization.patch_overview import (
+            generate_patch_overview as _generate_patch_overview,
         )
 
-        grid_h = resized_height // patch_size
-        grid_w = resized_width // patch_size
-
-        merged_grid_h = grid_h // spatial_merge_size
-        merged_grid_w = grid_w // spatial_merge_size
-        effective_patch_size = patch_size * spatial_merge_size
-
-        resized_image = image.resize((resized_width, resized_height), Image.LANCZOS)
-
-        overlay_image = resized_image.copy()
-        draw = ImageDraw.Draw(overlay_image)
-
-        for i in range(merged_grid_h):
-            y_start = i * effective_patch_size
-            draw.line([(0, y_start), (resized_width, y_start)], fill="red", width=1)
-            y_end = (i + 1) * effective_patch_size - 1
-            draw.line([(0, y_end), (resized_width, y_end)], fill="red", width=1)
-
-        for j in range(merged_grid_w):
-            x_start = j * effective_patch_size
-            draw.line([(x_start, 0), (x_start, resized_height)], fill="red", width=1)
-            x_end = (j + 1) * effective_patch_size - 1
-            draw.line([(x_end, 0), (x_end, resized_height)], fill="red", width=1)
-
-        font_size = max(14, min(32, effective_patch_size // 3))
-
-        try:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size
-            )
-        except (OSError, IOError):
-            try:
-                font = ImageFont.load_default()
-            except (OSError, IOError):
-                font = None
-
-        if with_labels:
-            patch_num = start_number
-            for i in range(merged_grid_h):
-                for j in range(merged_grid_w):
-                    if (
-                        patch_num % 10 == 1
-                        or patch_num == merged_grid_h * merged_grid_w
-                    ):
-                        x = j * effective_patch_size + effective_patch_size // 4
-                        y = i * effective_patch_size + effective_patch_size // 4
-
-                        text = str(patch_num)
-                        if font:
-                            bbox = draw.textbbox((0, 0), text, font=font)
-                            text_width = bbox[2] - bbox[0]
-                            text_height = bbox[3] - bbox[1]
-                        else:
-                            text_width, text_height = len(text) * 6, 10
-
-                        draw.rectangle(
-                            [x - 1, y - 1, x + text_width + 1, y + text_height + 4],
-                            fill="white",
-                            outline="red",
-                        )
-
-                        draw.text((x, y), text, fill="red", font=font)
-
-                    patch_num += 1
-
-        return overlay_image
+        info = self.process_image(image)
+        return _generate_patch_overview(info, **kwargs)
 
     def prepare_messages_batch(
         self,
