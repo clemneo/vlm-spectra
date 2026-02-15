@@ -215,8 +215,12 @@ class HookedVLM:
             - mlp.hook_pre, mlp.hook_pre_linear: gate/up projections
             - mlp.hook_out: MLP output
 
-        Valid pre-hook points (for head-level patching):
+        Valid pre-hook points:
+            - hook_resid_pre: layer input (residual stream before attention)
+            - attn.hook_in: attention block input
             - attn.hook_z: pre o_proj, use with PatchHead for individual head patching
+            - mlp.hook_in: MLP block input
+            - mlp.hook_post: post-activation (after gate * up)
 
         Example:
             def scale_hook(module, args, kwargs, output):
