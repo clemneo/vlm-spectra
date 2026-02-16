@@ -29,7 +29,11 @@ VALID_PATCH_HOOK_TYPES: Set[str] = {
 
 # Valid pre-hook types for patching (is_pre=True but patchable)
 VALID_PRE_PATCH_HOOK_TYPES: Set[str] = {
+    "hook_resid_pre",
+    "attn.hook_in",
     "attn.hook_z",
+    "mlp.hook_in",
+    "mlp.hook_post",
 }
 
 
@@ -58,15 +62,9 @@ def validate_patch_hook_type(hook_type: str) -> bool:
 
     # Provide helpful error messages for common mistakes
     all_valid = sorted(VALID_PATCH_HOOK_TYPES | VALID_PRE_PATCH_HOOK_TYPES)
-    pre_hooks = {"hook_resid_pre", "attn.hook_in", "mlp.hook_in", "mlp.hook_post"}
     virtual_hooks = {"attn.hook_scores", "attn.hook_pattern", "attn.hook_head_out", "hook_resid_mid"}
 
-    if hook_type in pre_hooks:
-        raise ValueError(
-            f"Hook type '{hook_type}' is a pre-hook and cannot be used for patching. "
-            f"Pre-hooks capture inputs, not outputs. Valid hook types: {all_valid}"
-        )
-    elif hook_type in virtual_hooks:
+    if hook_type in virtual_hooks:
         raise ValueError(
             f"Hook type '{hook_type}' is a virtual hook and cannot be used for patching. "
             f"Virtual hooks are computed from other activations. Valid hook types: {all_valid}"

@@ -156,13 +156,6 @@ class PatchValidHookPointsSuite:
         ]):
             vlm_model.forward(inputs)
 
-    def test_invalid_pre_hook_rejected(self, vlm_model):
-        with pytest.raises(ValueError, match="pre-hook"):
-            with vlm_model.run_with_hooks([
-                ("lm.blocks.0.hook_resid_pre", lambda m, a, k, o: None)
-            ]):
-                pass
-
     def test_invalid_virtual_hook_rejected(self, vlm_model):
         with pytest.raises(ValueError, match="virtual"):
             with vlm_model.run_with_hooks([
@@ -190,13 +183,6 @@ class PatchValidateHookTypeSuite:
         """Pre-hooks in VALID_PRE_PATCH_HOOK_TYPES should return True."""
         for hook_type in VALID_PRE_PATCH_HOOK_TYPES:
             assert validate_patch_hook_type(hook_type) is True
-
-    def test_unsupported_pre_hook_raises(self):
-        with pytest.raises(ValueError, match="pre-hook"):
-            validate_patch_hook_type("hook_resid_pre")
-
-        with pytest.raises(ValueError, match="pre-hook"):
-            validate_patch_hook_type("attn.hook_in")
 
     def test_virtual_hook_raises(self):
         with pytest.raises(ValueError, match="virtual"):
@@ -426,25 +412,15 @@ class PatchPreHookSuite:
 
         assert len(hooked_layers) == vlm_model.lm_num_layers
 
-    def test_unsupported_pre_hook_rejected(self, vlm_model):
-        """Verify unsupported pre-hooks are still rejected."""
-        with pytest.raises(ValueError, match="pre-hook"):
+    def test_all_pre_hooks_accepted(self, vlm_model):
+        """Verify all pre-hooks are accepted for patching."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+        for hook_type in ["hook_resid_pre", "attn.hook_in", "attn.hook_z", "mlp.hook_in", "mlp.hook_post"]:
             with vlm_model.run_with_hooks([
-                ("lm.blocks.0.hook_resid_pre", lambda m, a, k, o: None)
+                (f"lm.blocks.0.{hook_type}", lambda m, a, k, o: None)
             ]):
-                pass
-
-        with pytest.raises(ValueError, match="pre-hook"):
-            with vlm_model.run_with_hooks([
-                ("lm.blocks.0.attn.hook_in", lambda m, a, k, o: None)
-            ]):
-                pass
-
-        with pytest.raises(ValueError, match="pre-hook"):
-            with vlm_model.run_with_hooks([
-                ("lm.blocks.0.mlp.hook_post", lambda m, a, k, o: None)
-            ]):
-                pass
+                vlm_model.forward(inputs)
 
 
 class PatchPreHookCleanupSuite:
