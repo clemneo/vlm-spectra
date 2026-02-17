@@ -76,6 +76,10 @@ class SmolVLMProcessor(BaseProcessor):
         assistant_prefill: Optional[str] = "",
         return_text: bool = False,
     ) -> Union[Dict[str, torch.Tensor], Tuple[Dict[str, torch.Tensor], List[str]]]:
+        if len(tasks) != len(images):
+            raise ValueError(
+                f"Number of tasks ({len(tasks)}) must match number of images ({len(images)})"
+            )
         assistant_prefill = "" if assistant_prefill is None else assistant_prefill
 
         batch_texts = []
