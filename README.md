@@ -16,15 +16,13 @@ The architecture is designed to be extensible for additional VLM models.
 ### Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
+# One-line install
+uv pip install git+https://github.com/clemneo/vlm-spectra.git
+
+# Or for development
+git clone https://github.com/clemneo/vlm-spectra.git
 cd vlm-spectra
-
-# Install dependencies using uv
 uv sync
-
-# Or install in development mode
-uv pip install -e .
 ```
 
 ### Pre-download Model Weights
@@ -298,4 +296,4 @@ This toolkit is designed for interpretability research on vision-language models
 
 ## License
 
-[Add your license information here]
+MIT

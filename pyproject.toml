@@ -5,34 +5,36 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vlm-spectra"
 version = "0.1.0"
-description = "Add your description here"
+description = "A research toolkit for Vision-Language Model interpretability"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "accelerate>=1.7.0",
     "einops>=0.8.1",
     "flask>=2.3.3",
     "pillow>=11.2.1",
-    "pytest>=8.4.0",
-    "ruff>=0.11.13",
     "torch>=2.7.1",
     "torchvision>=0.22.1",
     "transformers>=4.53.0",
     "werkzeug>=2.3.7",
 ]
 
+[project.urls]
+Homepage = "https://github.com/clemneo/vlm-spectra"
+Repository = "https://github.com/clemneo/vlm-spectra"
+
 [project.optional-dependencies]
-test = [
-    "pytest>=7.0",
-    "pytest-cov",
-    "pytest-mock",
-]
 examples = [
     "matplotlib>=3.7",
     "tqdm>=4.65",
     "datasets>=2.14",
 ]
 dev = [
+    "pytest>=8.4.0",
+    "pytest-cov",
+    "pytest-mock",
+    "ruff>=0.11.13",
     "jupyter>=1.1.1",
 ]
 
@@ -41,6 +43,9 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.package-data]
+vlm_spectra = ["web_app/templates/*.html", "web_app/static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
