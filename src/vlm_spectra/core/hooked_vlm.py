@@ -12,12 +12,12 @@ from vlm_spectra.core.hook_points import HookPoint
 from vlm_spectra.models.registry import ModelRegistry
 from vlm_spectra.preprocessing.prompts import default_prompt_for_model
 from vlm_spectra.preprocessing.llava_processor import LlavaProcessor
+from vlm_spectra.preprocessing.base_processor import BaseProcessor
 from vlm_spectra.preprocessing.qwen_processor import QwenProcessor
 from vlm_spectra.preprocessing.smolvlm_processor import SmolVLMProcessor
 from vlm_spectra.preprocessing.spatial import ImageInfo
 from vlm_spectra.preprocessing.utils.vision_info import (
     IMAGE_FACTOR,
-    process_vision_info,
     resolve_patch_params,
 )
 
@@ -28,7 +28,7 @@ class HookedVLM:
     def __init__(
         self,
         model,
-        processor: QwenProcessor,
+        processor: BaseProcessor,
         adapter,
         device: str = "auto",
     ) -> None:
@@ -105,15 +105,21 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                return_dict_in_generate=return_dict_in_generate,
-                **kwargs,
-            )
-
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=do_sample,
+                    return_dict_in_generate=return_dict_in_generate,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
         return outputs
 
     def forward(
@@ -127,12 +133,19 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.forward(
-                **inputs,
-                return_dict=return_dict,
-                **kwargs,
-            )
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.forward(
+                    **inputs,
+                    return_dict=return_dict,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
         return outputs
 
     def prepare_inputs(
@@ -299,81 +312,13 @@ class HookedVLM:
         assistant_prefill: str | None = "",
         return_text: bool = False,
     ):
-        if len(tasks) != len(images):
-            raise ValueError(
-                f"Number of tasks ({len(tasks)}) must match number of images ({len(images)})"
-            )
-
-        # Delegate to processor if it has batch support
-        if hasattr(self._processor, "prepare_inputs_batch"):
-            return self._processor.prepare_inputs_batch(
-                tasks=tasks,
-                images=images,
-                append_text=append_text,
-                assistant_prefill=assistant_prefill,
-                return_text=return_text,
-            )
-
-        # TODO: Move this Qwen-specific logic to QwenProcessor.prepare_inputs_batch
-        # so that all batch processing is handled by the processor, not here.
-        assistant_prefill = "" if assistant_prefill is None else assistant_prefill
-
-        batch_messages = []
-        batch_texts = []
-
-        for task, image in zip(tasks, images):
-            prompt_text = self._processor._render_prompt(task, None)
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_text},
-                        {"type": "image", "image": image},
-                    ],
-                }
-            ]
-
-            if assistant_prefill:
-                messages.append({"role": "assistant", "content": assistant_prefill})
-
-            if assistant_prefill:
-                text = self.processor.apply_chat_template(
-                    messages, tokenize=False, continue_final_message=True
-                )
-            else:
-                text = self.processor.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-
-            if append_text:
-                text += append_text
-
-            batch_messages.append(messages)
-            batch_texts.append(text)
-
-        all_image_inputs = []
-        all_video_inputs = []
-
-        for messages in batch_messages:
-            image_inputs, video_inputs = process_vision_info(
-                messages, image_factor=self.image_factor
-            )
-            if image_inputs:
-                all_image_inputs.extend(image_inputs)
-            if video_inputs:
-                all_video_inputs.extend(video_inputs)
-
-        inputs = self.processor(
-            text=batch_texts,
-            images=all_image_inputs if all_image_inputs else None,
-            videos=all_video_inputs if all_video_inputs else None,
-            padding=True,
-            return_tensors="pt",
+        return self._processor.prepare_inputs_batch(
+            tasks=tasks,
+            images=images,
+            append_text=append_text,
+            assistant_prefill=assistant_prefill,
+            return_text=return_text,
         )
-
-        if return_text:
-            return inputs, batch_texts
-        return inputs
 
     def forward_batch(
         self,
@@ -402,13 +347,19 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.forward(
-                **inputs,
-                return_dict=return_dict,
-                **kwargs,
-            )
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.forward(
+                    **inputs,
+                    return_dict=return_dict,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
         return outputs
 
     def generate_batch(
@@ -440,14 +391,20 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                return_dict_in_generate=return_dict_in_generate,
-                **kwargs,
-            )
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=do_sample,
+                    return_dict_in_generate=return_dict_in_generate,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
 
         return outputs

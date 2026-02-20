@@ -94,6 +94,38 @@ class TestProcessorBatch:
         assert isinstance(texts[0], str)
 
 
+class TestProcessorDirect:
+    """Test processor-level batch methods directly (not through HookedVLM)."""
+
+    def test_prepare_inputs_batch_callable(self, tiny_model):
+        """prepare_inputs_batch should be callable directly on the processor."""
+        processor = tiny_model._processor
+        images = [generate_test_image(seed=i) for i in range(2)]
+        tasks = ["Task 1", "Task 2"]
+
+        inputs = processor.prepare_inputs_batch(tasks=tasks, images=images)
+
+        assert "input_ids" in inputs
+        assert inputs["input_ids"].shape[0] == 2
+
+    def test_prepare_inputs_batch_return_text(self, tiny_model):
+        """prepare_inputs_batch with return_text should return (inputs, List[str])."""
+        processor = tiny_model._processor
+        images = [generate_test_image(seed=i) for i in range(2)]
+        tasks = ["Task 1", "Task 2"]
+
+        result = processor.prepare_inputs_batch(
+            tasks=tasks, images=images, return_text=True
+        )
+
+        assert isinstance(result, tuple)
+        inputs, texts = result
+        assert "input_ids" in inputs
+        assert isinstance(texts, list)
+        assert len(texts) == 2
+        assert all(isinstance(t, str) for t in texts)
+
+
 class TestProcessorTokenizer:
     """Test tokenizer behavior via processor."""
 
