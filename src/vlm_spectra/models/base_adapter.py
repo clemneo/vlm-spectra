@@ -12,6 +12,9 @@ class ModelAdapter(ABC):
     def __init__(self, model: nn.Module) -> None:
         self.model = model
         self.processor = None
+        self._original_attn_impl = getattr(
+            getattr(model, "config", None), "_attn_implementation", "sdpa"
+        )
 
     def set_processor(self, processor) -> None:
         """Set the processor for this adapter."""
@@ -105,7 +108,6 @@ class ModelAdapter(ABC):
         hidden_states: torch.Tensor,
         layer: int,
         attention_mask=None,
-        position_ids=None,
         position_embeddings=None,
     ) -> torch.Tensor:
         """Compute attention patterns for a given layer."""
@@ -116,7 +118,6 @@ class ModelAdapter(ABC):
         hidden_states: torch.Tensor,
         layer: int,
         attention_mask=None,
-        position_ids=None,
         position_embeddings=None,
     ) -> torch.Tensor:
         """Compute pre-softmax attention scores for a given layer."""

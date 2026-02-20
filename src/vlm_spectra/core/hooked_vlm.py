@@ -105,15 +105,21 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                return_dict_in_generate=return_dict_in_generate,
-                **kwargs,
-            )
-
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=do_sample,
+                    return_dict_in_generate=return_dict_in_generate,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
         return outputs
 
     def forward(
@@ -127,12 +133,19 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.forward(
-                **inputs,
-                return_dict=return_dict,
-                **kwargs,
-            )
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.forward(
+                    **inputs,
+                    return_dict=return_dict,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
         return outputs
 
     def prepare_inputs(
@@ -334,13 +347,19 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.forward(
-                **inputs,
-                return_dict=return_dict,
-                **kwargs,
-            )
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.forward(
+                    **inputs,
+                    return_dict=return_dict,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
         return outputs
 
     def generate_batch(
@@ -372,14 +391,20 @@ class HookedVLM:
         self.model.eval()
         if require_grads:
             self.model.requires_grad_(True)
-
-        with torch.no_grad() if not require_grads else nullcontext():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                return_dict_in_generate=return_dict_in_generate,
-                **kwargs,
-            )
+        needs_eager = kwargs.get("output_attentions", False)
+        if needs_eager and hasattr(self.model, "set_attn_implementation"):
+            self.model.set_attn_implementation("eager")
+        try:
+            with torch.no_grad() if not require_grads else nullcontext():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=do_sample,
+                    return_dict_in_generate=return_dict_in_generate,
+                    **kwargs,
+                )
+        finally:
+            if needs_eager and hasattr(self.model, "set_attn_implementation"):
+                self.model.set_attn_implementation(self.adapter._original_attn_impl)
 
         return outputs

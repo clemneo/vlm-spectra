@@ -185,7 +185,6 @@ class HookManager:
                             hidden_states=hook_data["hidden_states"],
                             layer=layer,
                             attention_mask=hook_data.get("attention_mask"),
-                            position_ids=hook_data.get("position_ids"),
                             position_embeddings=hook_data.get("position_embeddings"),
                         )
                     else:
@@ -202,7 +201,6 @@ class HookManager:
                             hidden_states=hook_data["hidden_states"],
                             layer=layer,
                             attention_mask=hook_data.get("attention_mask"),
-                            position_ids=hook_data.get("position_ids"),
                             position_embeddings=hook_data.get("position_embeddings"),
                         )
                     else:
@@ -263,12 +261,6 @@ class HookManager:
                     hook_data["position_embeddings"] = self._clone_activation(args[1])
                 else:
                     hook_data["attention_mask"] = self._clone_activation(args[1])
-            if (
-                len(args) > 2
-                and "position_ids" not in hook_data
-                and "position_embeddings" not in hook_data
-            ):
-                hook_data["position_ids"] = self._clone_activation(args[2])
             elif "hidden_states" in kwargs:
                 hook_data["hidden_states"] = self._clone_activation(
                     kwargs["hidden_states"]
@@ -280,11 +272,6 @@ class HookManager:
                 )
             else:
                 hook_data["attention_mask"] = hook_data.get("attention_mask")
-
-            if "position_ids" in kwargs:
-                hook_data["position_ids"] = self._clone_activation(kwargs["position_ids"])
-            else:
-                hook_data["position_ids"] = hook_data.get("position_ids")
 
             if "position_embeddings" in kwargs:
                 hook_data["position_embeddings"] = self._clone_activation(

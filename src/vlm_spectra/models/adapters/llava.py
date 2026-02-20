@@ -29,8 +29,6 @@ if LlavaForConditionalGeneration is not None:
         def __init__(self, model: nn.Module) -> None:
             super().__init__(model)
             self._language_model = model.language_model
-            if hasattr(self.model, "set_attn_implementation"):
-                self.model.set_attn_implementation("eager")
 
         @property
         def lm_layers(self):
@@ -146,32 +144,66 @@ if LlavaForConditionalGeneration is not None:
             hidden_states: torch.Tensor,
             layer: int,
             attention_mask=None,
-            position_ids=None,
             position_embeddings=None,
         ) -> torch.Tensor:
-            """Compute attention patterns using Llama attention with output_attentions."""
+            """Compute attention patterns manually (matches eager_attention_forward)."""
             attn_layer = self.lm_attn[layer]
+            bsz, seq_len, _ = hidden_states.shape
+            hidden_shape = (bsz, seq_len, -1, self.lm_head_dim)
 
-            kwargs = {
-                "hidden_states": hidden_states,
-                "attention_mask": attention_mask,
-                "output_attentions": True,
-            }
+            # Q, K projections + reshape (matches LlamaAttention.forward)
+            query_states = (
+                attn_layer.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            )
+            key_states = (
+                attn_layer.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            )
 
+            # Apply RoPE if position_embeddings provided
             if position_embeddings is not None:
-                kwargs["position_embeddings"] = position_embeddings
-            elif position_ids is not None:
-                kwargs["position_ids"] = position_ids
+                cos, sin = position_embeddings
+                query_states, key_states = apply_rotary_pos_emb(
+                    query_states, key_states, cos, sin
+                )
 
-            attn_outputs = attn_layer(**kwargs)
-            return attn_outputs[1]
+            # GQA expansion
+            key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
+
+            # Pre-softmax scores
+            attn_weights = (
+                torch.matmul(query_states, key_states.transpose(2, 3)) * attn_layer.scaling
+            )
+
+            # Apply causal mask
+            if attention_mask is not None:
+                causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                attn_weights = attn_weights + causal_mask
+            else:
+                seq_len = attn_weights.size(-1)
+                causal_mask = torch.triu(
+                    torch.full(
+                        (seq_len, seq_len),
+                        float("-inf"),
+                        device=attn_weights.device,
+                        dtype=attn_weights.dtype,
+                    ),
+                    diagonal=1,
+                )
+                causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
+                attn_weights = attn_weights + causal_mask
+
+            # Softmax in float32 then cast back
+            attn_weights = nn.functional.softmax(
+                attn_weights, dim=-1, dtype=torch.float32
+            ).to(query_states.dtype)
+
+            return attn_weights
 
         def compute_attention_scores(
             self,
             hidden_states: torch.Tensor,
             layer: int,
             attention_mask=None,
-            position_ids=None,
             position_embeddings=None,
         ) -> torch.Tensor:
             """Compute pre-softmax attention scores (matches LlamaAttention.forward)."""
@@ -187,11 +219,6 @@ if LlavaForConditionalGeneration is not None:
                 attn_layer.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
             )
 
-            # Apply RoPE if position_embeddings provided.
-            # Note: In transformers 4.50+, LlamaModel precomputes position_embeddings
-            # at the model level and passes them to attention layers. The attention
-            # forward() no longer accepts position_ids directly, so position_embeddings
-            # will always be present when hooks capture layer inputs.
             if position_embeddings is not None:
                 cos, sin = position_embeddings
                 query_states, key_states = apply_rotary_pos_emb(

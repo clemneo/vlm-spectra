@@ -74,8 +74,6 @@ if Qwen3VLForConditionalGeneration is not None:
 
         def __init__(self, model: nn.Module) -> None:
             super().__init__(model)
-            if hasattr(self.model, "set_attn_implementation"):
-                self.model.set_attn_implementation("eager")
 
         @property
         def lm_layers(self):
@@ -211,25 +209,62 @@ if Qwen3VLForConditionalGeneration is not None:
             hidden_states: torch.Tensor,
             layer: int,
             attention_mask=None,
-            position_ids=None,
             position_embeddings=None,
         ) -> torch.Tensor:
-            """Compute attention patterns using Qwen3-VL attention logic."""
-            _ = position_ids
+            """Compute attention patterns manually using Qwen3-VL attention logic."""
             if position_embeddings is None:
                 raise ValueError(
                     "position_embeddings are required for Qwen3-VL attention."
                 )
             attn_layer = self.lm_attn[layer]
-            attn_outputs = attn_layer(
-                hidden_states=hidden_states,
-                position_embeddings=position_embeddings,
-                attention_mask=attention_mask,
-                output_attentions=True,
+            bsz, q_len, _ = hidden_states.size()
+            hidden_shape = (bsz, q_len, -1, attn_layer.head_dim)
+
+            # Qwen3-VL text model uses q_norm/k_norm after projection
+            query_states = attn_layer.q_norm(
+                attn_layer.q_proj(hidden_states).view(hidden_shape)
+            ).transpose(1, 2)
+            key_states = attn_layer.k_norm(
+                attn_layer.k_proj(hidden_states).view(hidden_shape)
+            ).transpose(1, 2)
+
+            # Apply standard RoPE (no multimodal sections for text model)
+            cos, sin = position_embeddings
+            from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+                apply_rotary_pos_emb as qwen3_apply_rotary_pos_emb,
             )
-            # With cache disabled: (attn_output, attn_weights);
-            # with cache enabled: (attn_output, attn_weights, past_key_value).
-            attn_weights = attn_outputs[1]
+            query_states, key_states = qwen3_apply_rotary_pos_emb(
+                query_states, key_states, cos, sin
+            )
+
+            key_states = repeat_kv(key_states, attn_layer.num_key_value_groups)
+
+            attn_weights = (
+                torch.matmul(query_states, key_states.transpose(2, 3))
+                * attn_layer.scaling
+            )
+
+            if attention_mask is not None:
+                causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                attn_weights = attn_weights + causal_mask
+            else:
+                seq_len = attn_weights.size(-1)
+                causal_mask = torch.triu(
+                    torch.full(
+                        (seq_len, seq_len),
+                        float("-inf"),
+                        device=attn_weights.device,
+                        dtype=attn_weights.dtype,
+                    ),
+                    diagonal=1,
+                )
+                causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
+                attn_weights = attn_weights + causal_mask
+
+            attn_weights = nn.functional.softmax(
+                attn_weights, dim=-1, dtype=torch.float32
+            ).to(query_states.dtype)
+
             return attn_weights
 
         def compute_attention_scores(
@@ -237,11 +272,9 @@ if Qwen3VLForConditionalGeneration is not None:
             hidden_states: torch.Tensor,
             layer: int,
             attention_mask=None,
-            position_ids=None,
             position_embeddings=None,
         ) -> torch.Tensor:
             """Compute pre-softmax attention scores using Qwen3-VL attention logic."""
-            _ = position_ids
             if position_embeddings is None:
                 raise ValueError(
                     "position_embeddings are required for Qwen3-VL attention scores."

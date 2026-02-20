@@ -63,8 +63,6 @@ class Qwen25VLAdapter(ModelAdapter):
 
     def __init__(self, model: nn.Module) -> None:
         super().__init__(model)
-        if hasattr(self.model, "set_attn_implementation"):
-            self.model.set_attn_implementation("eager")
 
     @property
     def lm_layers(self):
@@ -198,11 +196,9 @@ class Qwen25VLAdapter(ModelAdapter):
         hidden_states: torch.Tensor,
         layer: int,
         attention_mask=None,
-        position_ids=None,
         position_embeddings=None,
     ) -> torch.Tensor:
         """Compute attention patterns using Qwen2.5-VL attention logic."""
-        _ = position_ids
         attn_layer = self.lm_attn[layer]
 
         bsz, q_len, _ = hidden_states.size()
@@ -264,11 +260,9 @@ class Qwen25VLAdapter(ModelAdapter):
         hidden_states: torch.Tensor,
         layer: int,
         attention_mask=None,
-        position_ids=None,
         position_embeddings=None,
     ) -> torch.Tensor:
         """Compute pre-softmax attention scores using Qwen2.5-VL attention logic."""
-        _ = position_ids
         attn_layer = self.lm_attn[layer]
 
         bsz, q_len, _ = hidden_states.size()
