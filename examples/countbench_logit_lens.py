@@ -174,6 +174,107 @@ def compute_answer_rank(
     return rank
 
 
+def compute_register_token_analysis(
+    embeddings: torch.Tensor,
+    logit_lens_result: list[list[list[tuple[str, str]]]],
+) -> dict:
+    """Identify register tokens and number-prediction positions among image tokens.
+
+    Args:
+        embeddings: [num_image_tokens, hidden_dim] — layer 0 input embeddings
+            for image tokens only.
+        logit_lens_result: [layers][positions][top_k][(token_str, prob_str)]
+            from compute_logit_lens.
+
+    Returns:
+        Dict with register_positions, number_positions, and norm statistics.
+    """
+    # Register tokens: positions where L2 norm > mean + 2*std
+    norms = torch.norm(embeddings, dim=-1)
+    mean_norm = norms.mean().item()
+    std_norm = norms.std().item()
+    threshold = mean_norm + 2 * std_norm
+    register_positions = (norms > threshold).nonzero(as_tuple=True)[0].tolist()
+
+    # Number positions: any position where top-1 prediction is a number at any layer
+    number_positions: set[int] = set()
+    for layer_data in logit_lens_result:
+        for pos, token_prob_pairs in enumerate(layer_data):
+            if not token_prob_pairs:
+                continue
+            tok_str, _ = token_prob_pairs[0]
+            if token_to_number(tok_str) is not None:
+                number_positions.add(pos)
+
+    return {
+        "register_positions": register_positions,
+        "number_positions": sorted(number_positions),
+        "norm_mean": round(mean_norm, 4),
+        "norm_std": round(std_norm, 4),
+        "norm_threshold": round(threshold, 4),
+    }
+
+
+def compute_ablation_analysis(
+    model, inputs, start_idx, end_idx, number_positions,
+    norm, lm_head, tokenizer, top_k,
+):
+    """Run ablated forward pass and count where numbers appear at non-ablated positions.
+
+    Zeros out `number_positions` (image-token-relative) at layer 0 resid_pre,
+    runs a full forward pass, computes logit lens on image tokens, and counts
+    positions where a number 2-9 is top-1 (excluding ablated positions).
+    """
+    if not number_positions:
+        return {
+            "positions_before": [],
+            "num_before": 0,
+            "positions_after": [],
+            "num_after": 0,
+        }
+
+    ablated_set = set(number_positions)
+
+    # Build ablation hook — zeros specific image-token positions at layer 0
+    def ablate_hook(module, args, kwargs, output):
+        for pos in ablated_set:
+            output[0, start_idx + pos, :] = 0
+        return output
+
+    # Second forward pass: ablation + cache
+    with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
+        with model.run_with_hooks([("lm.blocks.0.hook_resid_pre", ablate_hook)]):
+            model.forward(inputs)
+
+    abl_cache = ActivationCache()
+    abl_cache._data = model.cache
+    abl_stacked = abl_cache.stack("lm.blocks.*.hook_resid_post")
+    abl_image_hidden = abl_stacked[:, 0, start_idx : end_idx + 1, :]
+
+    abl_logit_lens = compute_logit_lens(
+        abl_image_hidden, norm, lm_head, tokenizer, top_k=top_k
+    )
+
+    # Count number positions after ablation, excluding ablated positions
+    positions_after = set()
+    for layer_data in abl_logit_lens:
+        for pos, token_prob_pairs in enumerate(layer_data):
+            if pos in ablated_set:
+                continue
+            if not token_prob_pairs:
+                continue
+            tok_str, _ = token_prob_pairs[0]
+            if token_to_number(tok_str) is not None:
+                positions_after.add(pos)
+
+    return {
+        "positions_before": sorted(ablated_set),
+        "num_before": len(ablated_set),
+        "positions_after": sorted(positions_after),
+        "num_after": len(positions_after),
+    }
+
+
 def recompute_cached_ranks(result: dict, prob_threshold: float) -> None:
     """Recompute cached ranks for a new probability threshold."""
     stored_counts = result.get("number_counts", {})
@@ -485,7 +586,7 @@ def main():
                 start_idx, end_idx = model.get_image_token_range(inputs)
 
                 # Step 3: Cache hidden states and forward
-                with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
+                with model.run_with_cache(["lm.blocks.*.hook_resid_post", "lm.blocks.0.hook_resid_pre"]):
                     model.forward(inputs)
 
                 # Step 4: Stack and slice to image tokens only
@@ -495,6 +596,10 @@ def main():
                 # stacked shape: [num_layers, batch, seq, hidden]
                 image_hidden = stacked[:, 0, start_idx : end_idx + 1, :]
                 # image_hidden shape: [num_layers, num_image_tokens, hidden]
+
+                # Extract layer-0 input embeddings for register token analysis
+                layer0_input = activation_cache["lm.blocks.0.hook_resid_pre"]
+                image_embeddings = layer0_input[0, start_idx : end_idx + 1, :]
 
                 # Step 5: Compute logit lens on image tokens
                 logit_lens_result = compute_logit_lens(
@@ -516,6 +621,18 @@ def main():
                     number_counts_filtered, model_answer
                 )
 
+                # Step 8: Register token analysis
+                register_info = compute_register_token_analysis(
+                    image_embeddings, logit_lens_result
+                )
+
+                # Step 9: Ablation analysis
+                ablation_info = compute_ablation_analysis(
+                    model, inputs, start_idx, end_idx,
+                    register_info["number_positions"],
+                    norm, lm_head, tokenizer, args.top_k,
+                )
+
                 # Serialize number_counts: keys must be strings for JSON
                 number_counts_serializable = {
                     str(k): v for k, v in number_counts.items()
@@ -534,6 +651,8 @@ def main():
                     "rank_unfiltered": rank_unfiltered,
                     "rank_filtered": rank_filtered,
                     "prob_threshold": args.prob_threshold,
+                    "register_token_analysis": register_info,
+                    "ablation_analysis": ablation_info,
                 }
 
                 # Save per-image result
@@ -578,6 +697,49 @@ def main():
     num_excluded_unfiltered = len(results) - len(ranks_unfiltered)
     num_excluded_filtered = len(results) - len(ranks_filtered)
 
+    # Aggregate register token analysis
+    register_counts = []
+    number_counts_agg = []
+    overlap_pcts = []
+    for r in results:
+        reg = r.get("register_token_analysis")
+        if reg is None:
+            continue
+        reg_pos = set(reg["register_positions"])
+        num_pos = set(reg["number_positions"])
+        register_counts.append(len(reg_pos))
+        number_counts_agg.append(len(num_pos))
+        if reg_pos:
+            overlap_pcts.append(len(reg_pos & num_pos) / len(reg_pos) * 100)
+
+    register_summary = {}
+    if register_counts:
+        register_summary = {
+            "num_images_with_data": len(register_counts),
+            "mean_register_tokens": round(sum(register_counts) / len(register_counts), 2),
+            "mean_number_positions": round(sum(number_counts_agg) / len(number_counts_agg), 2),
+            "mean_overlap_pct": round(sum(overlap_pcts) / len(overlap_pcts), 2) if overlap_pcts else None,
+            "num_images_with_register_tokens": len(overlap_pcts),
+        }
+
+    # Aggregate ablation analysis
+    ablation_before = []
+    ablation_after = []
+    for r in results:
+        abl = r.get("ablation_analysis")
+        if abl is None:
+            continue
+        ablation_before.append(abl["num_before"])
+        ablation_after.append(abl["num_after"])
+
+    ablation_summary = {}
+    if ablation_before:
+        ablation_summary = {
+            "num_images": len(ablation_before),
+            "mean_positions_before": round(sum(ablation_before) / len(ablation_before), 2),
+            "mean_positions_after": round(sum(ablation_after) / len(ablation_after), 2),
+        }
+
     # Save aggregate rank results
     plots_dir.mkdir(parents=True, exist_ok=True)
     rank_results = {
@@ -587,6 +749,8 @@ def main():
         "ranks_filtered": ranks_filtered,
         "num_excluded_unfiltered": num_excluded_unfiltered,
         "num_excluded_filtered": num_excluded_filtered,
+        "register_token_analysis": register_summary,
+        "ablation_analysis": ablation_summary,
     }
     rank_results_path = output_dir / "rank_results.json"
     with open(rank_results_path, "w") as f:
@@ -601,6 +765,32 @@ def main():
         num_excluded_unfiltered,
         num_excluded_filtered,
     )
+
+    # Print register token analysis summary
+    if register_summary:
+        print("\n" + "=" * 70)
+        print("REGISTER TOKEN ANALYSIS")
+        print("=" * 70)
+        print(f"  Images with data:            {register_summary['num_images_with_data']}")
+        print(f"  Mean register tokens/image:  {register_summary['mean_register_tokens']}")
+        print(f"  Mean number positions/image: {register_summary['mean_number_positions']}")
+        if register_summary["mean_overlap_pct"] is not None:
+            print(f"  Images with register tokens: {register_summary['num_images_with_register_tokens']}")
+            print(f"  Mean overlap %:              {register_summary['mean_overlap_pct']:.1f}%")
+            print(f"    (% of register tokens that are also number-token positions)")
+        else:
+            print("  No images had register tokens — overlap not computable")
+        print("=" * 70)
+
+    # Print ablation analysis summary
+    if ablation_summary:
+        print("\n" + "=" * 70)
+        print("ABLATION ANALYSIS (zero ablation at layer 0)")
+        print("=" * 70)
+        print(f"  Images with data:            {ablation_summary['num_images']}")
+        print(f"  Mean positions before:       {ablation_summary['mean_positions_before']}")
+        print(f"  Mean positions after:        {ablation_summary['mean_positions_after']}")
+        print("=" * 70)
 
     # Create histograms
     if ranks_unfiltered:
