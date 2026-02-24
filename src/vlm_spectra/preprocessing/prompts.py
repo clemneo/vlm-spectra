@@ -111,10 +111,18 @@ def _qwen3_vl_tool_schema(display_width: int, display_height: int) -> dict[str, 
     }
 
 
-def build_qwen3_vl_prompt(task: str, display_width: int = 1000, display_height: int = 1000) -> str:
+def qwen3_vl_tool_use_prompt(task: str, display_width: int = 1000, display_height: int = 1000) -> str:
+    """Build a Qwen3-VL prompt wrapped in the computer-use tool-calling template.
+
+    This is NOT used as a default — opt in explicitly when you need tool-use framing.
+    """
     tool_schema = _qwen3_vl_tool_schema(display_width, display_height)
     tool_json = json.dumps({"type": "function", "function": tool_schema})
     return TOOL_CALL_TEMPLATE.format(tool_descs=tool_json) + f"\n\nUser task: {task}"
+
+
+# Keep old name as an alias for backwards compatibility
+build_qwen3_vl_prompt = qwen3_vl_tool_use_prompt
 
 
 DefaultPrompt = Optional[Union[str, Callable[[str], str]]]
@@ -123,8 +131,6 @@ DefaultPrompt = Optional[Union[str, Callable[[str], str]]]
 def default_prompt_for_model(model_name: str) -> DefaultPrompt:
     if model_name == "ByteDance-Seed/UI-TARS-1.5-7B":
         return UI_TARS_PROMPT
-    if model_name == "Qwen/Qwen3-VL-8B-Instruct":
-        return build_qwen3_vl_prompt
     if "SmolVLM" in model_name:
         return None
     return None

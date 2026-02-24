@@ -39,8 +39,6 @@ from vlm_spectra.analysis.logit_lens import compute_logit_lens
 # ---------------------------------------------------------------------------
 
 WORD_TO_NUMBER = {
-    "zero": 0,
-    "one": 1,
     "two": 2,
     "three": 3,
     "four": 4,
@@ -49,17 +47,6 @@ WORD_TO_NUMBER = {
     "seven": 7,
     "eight": 8,
     "nine": 9,
-    "ten": 10,
-    "eleven": 11,
-    "twelve": 12,
-    "thirteen": 13,
-    "fourteen": 14,
-    "fifteen": 15,
-    "sixteen": 16,
-    "seventeen": 17,
-    "eighteen": 18,
-    "nineteen": 19,
-    "twenty": 20,
 }
 
 # Build reverse mapping for parsing generated text (longest match first)
@@ -69,10 +56,10 @@ NUMBER_WORDS_BY_LENGTH = sorted(WORD_TO_NUMBER.keys(), key=len, reverse=True)
 def token_to_number(token_str: str) -> int | None:
     """Map a decoded token string to an integer value, or None."""
     stripped = token_str.strip().lower()
-    # Digit strings "0" through "20"
+    # Digit strings "2" through "9"
     if stripped.isdecimal():
         val = int(stripped)
-        if 0 <= val <= 20:
+        if 2 <= val <= 9:
             return val
         return None
     # Word forms
@@ -425,16 +412,27 @@ def main():
 
         ds = load_dataset(args.dataset, split="train")
         total_images = len(ds)
-        num_images = (
-            total_images
-            if args.num_images == -1
-            else min(args.num_images, total_images)
-        )
-        print(f"Dataset loaded: {total_images} images, processing {num_images}")
 
-        # Load model (default_prompt=None to avoid tool-calling template)
+        # Pre-filter to valid indices: non-null images with ground truth in 2–9
+        valid_indices = []
+        for i in range(total_images):
+            item = ds[i]
+            if item["image"] is None:
+                continue
+            gt, _, _ = parse_countbench_item(item)
+            if 2 <= gt <= 9:
+                valid_indices.append(i)
+        print(f"Dataset loaded: {total_images} total, {len(valid_indices)} valid (count 2–9, non-null)")
+
+        if args.num_images == -1:
+            selected_indices = valid_indices
+        else:
+            selected_indices = valid_indices[: args.num_images]
+        num_images = len(selected_indices)
+        print(f"Processing {num_images} images")
+
         print(f"Loading model: {args.model}")
-        model = HookedVLM.from_pretrained(args.model, default_prompt=None)
+        model = HookedVLM.from_pretrained(args.model)
         print(f"Model loaded: {model.lm_num_layers} layers, device={model.device}")
 
         components = model.get_model_components()
@@ -446,7 +444,7 @@ def main():
         results = []
         errors = []
 
-        for idx in tqdm(range(num_images), desc="Processing images"):
+        for idx in tqdm(selected_indices, desc="Processing images"):
             result_path = per_image_dir / f"image_{idx:05d}.json"
 
             # Resume support: skip if already processed
