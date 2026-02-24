@@ -12,6 +12,8 @@ from .patch_hooks import (
     AddActivation,
     ScaleActivation,
     PatchHead,
+    BlockAttention,
+    SetAttentionMask,
 )
 
 __all__ = [
@@ -27,4 +29,6 @@ __all__ = [
     "AddActivation",
     "ScaleActivation",
     "PatchHead",
+    "BlockAttention",
+    "SetAttentionMask",
 ]

@@ -231,6 +231,7 @@ class HookedVLM:
         Valid pre-hook points:
             - hook_resid_pre: layer input (residual stream before attention)
             - attn.hook_in: attention block input
+            - attn.hook_mask: attention mask intervention (use with BlockAttention/SetAttentionMask)
             - attn.hook_z: pre o_proj, use with PatchHead for individual head patching
             - mlp.hook_in: MLP block input
             - mlp.hook_post: post-activation (after gate * up)

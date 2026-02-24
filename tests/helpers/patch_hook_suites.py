@@ -20,6 +20,8 @@ from vlm_spectra.core.patch_hooks import (
     AddActivation,
     ScaleActivation,
     PatchHead,
+    BlockAttention,  # noqa: F401 – re-exported for test consumers
+    SetAttentionMask,  # noqa: F401 – re-exported for test consumers
 )
 
 __all__ = [
@@ -32,6 +34,7 @@ __all__ = [
     "PatchCacheInteractionSuite",
     "PatchPreHookSuite",
     "PatchPreHookCleanupSuite",
+    "PatchMaskHookSuite",
 ]
 
 
@@ -458,3 +461,127 @@ class PatchPreHookCleanupSuite:
 
         after = vlm_model.forward(inputs).logits
         assert torch.allclose(baseline, after, atol=1e-5)
+
+
+class PatchMaskHookSuite:
+    """Tests for attn.hook_mask attention mask intervention."""
+
+    def test_mask_hook_modifies_output(self, vlm_model):
+        """Verify modifying the attention mask changes model output."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        original = vlm_model.forward(inputs).logits.clone()
+
+        def neginf_mask(module, args, kwargs, mask):
+            m = mask.clone()
+            m[:, :, -1, :] = float("-inf")
+            return m
+
+        with vlm_model.run_with_hooks([("lm.blocks.0.attn.hook_mask", neginf_mask)]):
+            modified = vlm_model.forward(inputs).logits
+
+        assert not torch.allclose(original, modified, atol=1e-3)
+
+    def test_mask_hook_none_passthrough(self, vlm_model):
+        """Returning None should leave activations unchanged."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        original = vlm_model.forward(inputs).logits.clone()
+
+        def passthrough(module, args, kwargs, mask):
+            return None
+
+        with vlm_model.run_with_hooks([("lm.blocks.0.attn.hook_mask", passthrough)]):
+            modified = vlm_model.forward(inputs).logits
+
+        assert torch.allclose(original, modified, atol=1e-5)
+
+    def test_mask_hook_wildcard(self, vlm_model):
+        """Wildcard pattern should fire on every layer."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        hooked_layers = []
+
+        def tracking(module, args, kwargs, mask):
+            hooked_layers.append(True)
+            return None
+
+        with vlm_model.run_with_hooks([("lm.blocks.*.attn.hook_mask", tracking)]):
+            vlm_model.forward(inputs)
+
+        assert len(hooked_layers) == vlm_model.lm_num_layers
+
+    def test_mask_hook_receives_4d_tensor(self, vlm_model):
+        """The mask passed to the hook should be a 4-D tensor."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        observed_shapes = []
+
+        def capture_shape(module, args, kwargs, mask):
+            observed_shapes.append(mask.shape)
+            return None
+
+        with vlm_model.run_with_hooks([("lm.blocks.0.attn.hook_mask", capture_shape)]):
+            vlm_model.forward(inputs)
+
+        assert len(observed_shapes) == 1
+        assert len(observed_shapes[0]) == 4  # (batch, heads, seq, seq)
+
+    def test_mask_hook_cleanup(self, vlm_model):
+        """Hooks should be removed after context exits."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        baseline = vlm_model.forward(inputs).logits.clone()
+
+        def neginf_mask(module, args, kwargs, mask):
+            m = mask.clone()
+            m[:, :, -1, :] = float("-inf")
+            return m
+
+        with vlm_model.run_with_hooks([("lm.blocks.0.attn.hook_mask", neginf_mask)]):
+            pass
+
+        after = vlm_model.forward(inputs).logits
+        assert torch.allclose(baseline, after, atol=1e-5)
+
+    def test_mask_hook_compose_with_activation_hook(self, vlm_model):
+        """Mask hooks and activation hooks should compose."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        original = vlm_model.forward(inputs).logits.clone()
+
+        def neginf_mask(module, args, kwargs, mask):
+            m = mask.clone()
+            m[:, :, -1, :] = float("-inf")
+            return m
+
+        def scale_hook(module, args, kwargs, output):
+            return output * 0.5
+
+        with vlm_model.run_with_hooks([
+            ("lm.blocks.0.attn.hook_mask", neginf_mask),
+            ("lm.blocks.0.hook_resid_post", scale_hook),
+        ]):
+            modified = vlm_model.forward(inputs).logits
+
+        assert not torch.allclose(original, modified, atol=1e-3)
+
+    def test_mask_hook_lambda(self, vlm_model):
+        """Lambda hooks should work with attn.hook_mask."""
+        image = generate_test_image(seed=1)
+        inputs = vlm_model.prepare_messages("Describe.", image)
+
+        original = vlm_model.forward(inputs).logits.clone()
+
+        with vlm_model.run_with_hooks([
+            ("lm.blocks.0.attn.hook_mask", lambda m, a, k, mask: mask * 0)
+        ]):
+            modified = vlm_model.forward(inputs).logits
+
+        assert not torch.allclose(original, modified, atol=1e-3)

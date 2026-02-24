@@ -6,7 +6,7 @@ activations at specific hook points during model execution.
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Set, Union
+from typing import Callable, List, Optional, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -31,6 +31,7 @@ VALID_PATCH_HOOK_TYPES: Set[str] = {
 VALID_PRE_PATCH_HOOK_TYPES: Set[str] = {
     "hook_resid_pre",
     "attn.hook_in",
+    "attn.hook_mask",
     "attn.hook_z",
     "mlp.hook_in",
     "mlp.hook_post",
@@ -302,3 +303,66 @@ class PatchHead:
         tensor.view(batch, seq, self.num_heads, head_dim)
 
         return output
+
+
+# ---------------------------------------------------------------------------
+# Attention mask intervention helpers
+# ---------------------------------------------------------------------------
+
+# Signature for mask hook functions:
+# (module, args, kwargs, attention_mask) -> modified_mask | None
+MaskHookFn = Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]]
+
+
+class BlockAttention:
+    """Block attention between specific token pairs by setting mask to -inf.
+
+    Args:
+        indices_list: List of (source, target) token index pairs.
+            For each pair, attention from *source* to *target* is blocked.
+        batch_idx: Batch index to modify (default 0).
+    """
+
+    def __init__(
+        self,
+        indices_list: List[Tuple[int, int]],
+        batch_idx: int = 0,
+    ) -> None:
+        self.indices_list = indices_list
+        self.batch_idx = batch_idx
+
+    def __call__(
+        self,
+        module: nn.Module,
+        args: tuple,
+        kwargs: dict,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        _ = module, args, kwargs
+        mask = mask.clone()
+        for src, tgt in self.indices_list:
+            mask[self.batch_idx, :, src, tgt] = float("-inf")
+        return mask
+
+
+class SetAttentionMask:
+    """Replace the entire attention mask with a user-provided tensor.
+
+    Args:
+        mask: Replacement mask tensor.  Shape must be broadcastable to the
+            model's attention mask shape (typically
+            ``[batch, num_heads, seq_len, seq_len]``).
+    """
+
+    def __init__(self, mask: torch.Tensor) -> None:
+        self.mask = mask
+
+    def __call__(
+        self,
+        module: nn.Module,
+        args: tuple,
+        kwargs: dict,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        _ = module, args, kwargs, mask
+        return self.mask

@@ -7,6 +7,7 @@ All tests should run in < 1 second total.
 import pytest
 
 from vlm_spectra.core.hook_points import HookPoint
+from vlm_spectra.core.patch_hooks import validate_patch_hook_type
 
 
 class TestHookPointParse:
@@ -110,3 +111,38 @@ class TestHookPointConfig:
             assert isinstance(config.module_getter, str)
             assert isinstance(config.is_pre, bool)
             assert isinstance(config.is_virtual, bool)
+
+
+class TestAttnHookMask:
+    """Tests for the attn.hook_mask hook point."""
+
+    def test_parse_mask_hook(self):
+        hook_type, layer = HookPoint.parse("lm.blocks.3.attn.hook_mask")
+        assert hook_type == "attn.hook_mask"
+        assert layer == 3
+
+    def test_format_mask_hook(self):
+        name = HookPoint.format("attn.hook_mask", 7)
+        assert name == "lm.blocks.7.attn.hook_mask"
+
+    def test_expand_wildcard_mask_hook(self):
+        names = HookPoint.expand("lm.blocks.*.attn.hook_mask", num_layers=4)
+        assert names == [
+            "lm.blocks.0.attn.hook_mask",
+            "lm.blocks.1.attn.hook_mask",
+            "lm.blocks.2.attn.hook_mask",
+            "lm.blocks.3.attn.hook_mask",
+        ]
+
+    def test_is_pre_hook(self):
+        assert HookPoint.is_pre_hook("attn.hook_mask") is True
+
+    def test_is_not_virtual(self):
+        assert HookPoint.is_virtual("attn.hook_mask") is False
+
+    def test_module_getter(self):
+        assert HookPoint.get_module_getter("attn.hook_mask") == "get_lm_attn"
+
+    def test_validate_patch_hook_type_returns_true(self):
+        """attn.hook_mask should be accepted as a valid pre-hook for patching."""
+        assert validate_patch_hook_type("attn.hook_mask") is True

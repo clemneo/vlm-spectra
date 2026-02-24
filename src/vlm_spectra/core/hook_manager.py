@@ -143,7 +143,9 @@ class HookManager:
                     )
                 module = getter_fn(layer)
 
-                if is_pre:
+                if hook_type == "attn.hook_mask":
+                    wrapped_fn = self._wrap_mask_patch_hook(hook_fn)
+                elif is_pre:
                     wrapped_fn = self._wrap_pre_patch_hook(hook_fn)
                 else:
                     wrapped_fn = self._wrap_patch_hook(hook_fn)
@@ -389,5 +391,33 @@ class HookManager:
                 else:
                     new_arg = result
                 return (new_arg,) + args[1:], kwargs
+
+        return wrapper
+
+    def _wrap_mask_patch_hook(
+        self,
+        hook_fn: Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]],
+    ):
+        """Wrap a mask patch hook for pre-hook registration on self_attn.
+
+        Extracts ``kwargs["attention_mask"]``, passes it to *hook_fn* with the
+        unified ``(module, args, kwargs, mask)`` signature, and writes the
+        (possibly modified) mask back into *kwargs*.
+        """
+        def wrapper(module: nn.Module, args: tuple, kwargs: dict):
+            mask = kwargs.get("attention_mask")
+            if mask is None:
+                # No mask present — let the hook decide what to do.
+                # Build a dummy zero mask so the hook still has a tensor to work with.
+                return None
+
+            result = hook_fn(module, args, kwargs, mask)
+
+            if result is None:
+                return None
+
+            new_kwargs = dict(kwargs)
+            new_kwargs["attention_mask"] = result
+            return args, new_kwargs
 
         return wrapper

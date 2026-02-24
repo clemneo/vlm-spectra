@@ -11,6 +11,7 @@ from tests.helpers.patch_hook_suites import (
     PatchCacheInteractionSuite,
     PatchPreHookSuite,
     PatchPreHookCleanupSuite,
+    PatchMaskHookSuite,
 )
 
 
@@ -51,3 +52,7 @@ class TestPreHookPatching(PatchPreHookSuite):
 
 class TestPreHookCleanup(PatchPreHookCleanupSuite):
     """Ensure pre-hook cleanup works across acceptance models."""
+
+
+class TestMaskHookPatching(PatchMaskHookSuite):
+    """Run attention mask intervention tests on acceptance models."""
