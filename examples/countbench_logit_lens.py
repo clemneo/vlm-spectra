@@ -31,7 +31,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from vlm_spectra import ActivationCache, HookedVLM
+from vlm_spectra import ActivationCache, BlockAttention, HookedVLM
 from vlm_spectra.analysis.logit_lens import compute_logit_lens
 
 # ---------------------------------------------------------------------------
@@ -272,6 +272,68 @@ def compute_ablation_analysis(
         "num_before": len(ablated_set),
         "positions_after": sorted(positions_after),
         "num_after": len(positions_after),
+    }
+
+
+def compute_attention_blocking(
+    model, inputs, start_idx, number_positions,
+    original_logits, ground_truth, tokenizer,
+):
+    """Block attention from last position to count-token positions and measure effect.
+
+    Uses BlockAttention on all layers to set attention mask to -inf from
+    the final sequence position to each count-token position (absolute indices).
+    Compares argmax prediction and log-prob of correct count token.
+    """
+    if not number_positions or ground_truth is None or not (2 <= ground_truth <= 9):
+        return None
+
+    import torch.nn.functional as F
+
+    seq_len = inputs["input_ids"].shape[-1]
+    last_pos = seq_len - 1
+
+    # Convert image-relative positions to absolute
+    count_positions_abs = [start_idx + p for p in number_positions]
+
+    # Block attention from last position to count-token positions
+    blocking_pairs = [(last_pos, pos) for pos in count_positions_abs]
+    blocker = BlockAttention(blocking_pairs, batch_idx=0)
+
+    with model.run_with_hooks([("lm.blocks.*.attn.hook_mask", blocker)]):
+        blocked_output = model.forward(inputs)
+
+    blocked_logits = blocked_output.logits[0, -1, :]
+
+    # Get original and blocked predictions
+    original_pred_id = original_logits.argmax(dim=-1).item()
+    blocked_pred_id = blocked_logits.argmax(dim=-1).item()
+    original_pred_token = tokenizer.decode([original_pred_id])
+    blocked_pred_token = tokenizer.decode([blocked_pred_id])
+    original_pred_count = token_to_number(original_pred_token)
+    blocked_pred_count = token_to_number(blocked_pred_token)
+
+    # Log-prob of the correct count token
+    gt_token_ids = tokenizer.encode(str(ground_truth), add_special_tokens=False)
+    gt_token_id = gt_token_ids[0]
+
+    original_logprobs = F.log_softmax(original_logits.float(), dim=-1)
+    blocked_logprobs = F.log_softmax(blocked_logits.float(), dim=-1)
+
+    logprob_before = original_logprobs[gt_token_id].item()
+    logprob_after = blocked_logprobs[gt_token_id].item()
+
+    return {
+        "num_blocked_positions": len(count_positions_abs),
+        "blocked_positions_abs": count_positions_abs,
+        "answer_changed": original_pred_id != blocked_pred_id,
+        "original_pred_token": original_pred_token,
+        "blocked_pred_token": blocked_pred_token,
+        "original_pred_count": original_pred_count,
+        "blocked_pred_count": blocked_pred_count,
+        "logprob_correct_before": round(logprob_before, 4),
+        "logprob_correct_after": round(logprob_after, 4),
+        "logprob_change": round(logprob_after - logprob_before, 4),
     }
 
 
@@ -587,7 +649,7 @@ def main():
 
                 # Step 3: Cache hidden states and forward
                 with model.run_with_cache(["lm.blocks.*.hook_resid_post", "lm.blocks.0.hook_resid_pre"]):
-                    model.forward(inputs)
+                    fwd_output = model.forward(inputs)
 
                 # Step 4: Stack and slice to image tokens only
                 activation_cache = ActivationCache()
@@ -633,6 +695,14 @@ def main():
                     norm, lm_head, tokenizer, args.top_k,
                 )
 
+                # Step 10: Attention blocking analysis
+                original_logits = fwd_output.logits[0, -1, :]
+                attn_blocking_info = compute_attention_blocking(
+                    model, inputs, start_idx,
+                    register_info["number_positions"],
+                    original_logits, ground_truth, tokenizer,
+                )
+
                 # Serialize number_counts: keys must be strings for JSON
                 number_counts_serializable = {
                     str(k): v for k, v in number_counts.items()
@@ -653,6 +723,7 @@ def main():
                     "prob_threshold": args.prob_threshold,
                     "register_token_analysis": register_info,
                     "ablation_analysis": ablation_info,
+                    "attention_blocking": attn_blocking_info,
                 }
 
                 # Save per-image result
@@ -740,6 +811,29 @@ def main():
             "mean_positions_after": round(sum(ablation_after) / len(ablation_after), 2),
         }
 
+    # Aggregate attention blocking analysis
+    attn_block_changed = 0
+    attn_block_logprob_changes = []
+    attn_block_total = 0
+    for r in results:
+        ab = r.get("attention_blocking")
+        if ab is None:
+            continue
+        attn_block_total += 1
+        if ab["answer_changed"]:
+            attn_block_changed += 1
+        attn_block_logprob_changes.append(ab["logprob_change"])
+
+    attn_blocking_summary = {}
+    if attn_block_total > 0:
+        attn_blocking_summary = {
+            "num_images": attn_block_total,
+            "num_answer_changed": attn_block_changed,
+            "mean_logprob_change": round(
+                sum(attn_block_logprob_changes) / len(attn_block_logprob_changes), 4
+            ),
+        }
+
     # Save aggregate rank results
     plots_dir.mkdir(parents=True, exist_ok=True)
     rank_results = {
@@ -751,6 +845,7 @@ def main():
         "num_excluded_filtered": num_excluded_filtered,
         "register_token_analysis": register_summary,
         "ablation_analysis": ablation_summary,
+        "attention_blocking": attn_blocking_summary,
     }
     rank_results_path = output_dir / "rank_results.json"
     with open(rank_results_path, "w") as f:
@@ -790,6 +885,16 @@ def main():
         print(f"  Images with data:            {ablation_summary['num_images']}")
         print(f"  Mean positions before:       {ablation_summary['mean_positions_before']}")
         print(f"  Mean positions after:        {ablation_summary['mean_positions_after']}")
+        print("=" * 70)
+
+    # Print attention blocking analysis summary
+    if attn_blocking_summary:
+        print("\n" + "=" * 70)
+        print("ATTENTION BLOCKING ANALYSIS (block last→count positions, all layers)")
+        print("=" * 70)
+        print(f"  Images with data:            {attn_blocking_summary['num_images']}")
+        print(f"  Answer changed:              {attn_blocking_summary['num_answer_changed']} / {attn_blocking_summary['num_images']}")
+        print(f"  Mean Δ log-prob (correct):   {attn_blocking_summary['mean_logprob_change']}")
         print("=" * 70)
 
     # Create histograms

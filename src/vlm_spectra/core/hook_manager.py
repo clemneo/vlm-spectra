@@ -407,9 +407,38 @@ class HookManager:
         def wrapper(module: nn.Module, args: tuple, kwargs: dict):
             mask = kwargs.get("attention_mask")
             if mask is None:
-                # No mask present — let the hook decide what to do.
-                # Build a dummy zero mask so the hook still has a tensor to work with.
-                return None
+                # SDPA optimization: when standard causal masking suffices,
+                # transformers passes attention_mask=None and relies on
+                # SDPA's is_causal=True flag instead of an explicit mask.
+                # To let hook functions (e.g. BlockAttention) modify specific
+                # attention entries, we build the equivalent causal mask here.
+                # SDPA still accepts an explicit mask — it just can't use the
+                # Flash Attention kernel, falling back to the memory-efficient
+                # or math backend instead.
+                hidden_states = kwargs.get("hidden_states")
+                if hidden_states is None:
+                    return None
+                bsz, q_len = hidden_states.shape[:2]
+                cache_position = kwargs.get("cache_position")
+                if cache_position is not None and cache_position.max().item() + 1 > q_len:
+                    raise NotImplementedError(
+                        "Mask hook does not support cached decoding. "
+                        "Use model.forward() instead of model.generate() "
+                        "when using attention mask hooks."
+                    )
+                seq_len = q_len
+                mask = torch.zeros(
+                    (bsz, 1, seq_len, seq_len),
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                )
+                mask.masked_fill_(
+                    torch.triu(
+                        torch.ones(seq_len, seq_len, device=hidden_states.device, dtype=torch.bool),
+                        diagonal=1,
+                    ),
+                    float("-inf"),
+                )
 
             result = hook_fn(module, args, kwargs, mask)
 
