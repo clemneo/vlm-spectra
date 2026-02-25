@@ -33,6 +33,7 @@ from tqdm import tqdm
 
 from vlm_spectra import ActivationCache, BlockAttention, HookedVLM
 from vlm_spectra.analysis.logit_lens import compute_logit_lens
+from vlm_spectra.preprocessing.utils.vision_info import resolve_patch_params, smart_resize
 
 # ---------------------------------------------------------------------------
 # Number token utilities
@@ -473,6 +474,70 @@ def print_rank_summary(
     print("=" * 70)
 
 
+def create_aggregate_heatmap(
+    results: list[dict],
+    output_path: Path,
+    resolution: int = 128,
+) -> None:
+    """Create aggregate spatial heatmap of number token positions.
+
+    For each image, normalizes 1D number_positions to fractional (row, col)
+    coordinates using that image's grid_h/grid_w, bins into a common
+    resolution x resolution grid, and averages across all images.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    heatmap = np.zeros((resolution, resolution), dtype=np.float64)
+    num_contributing = 0
+
+    for r in results:
+        reg = r.get("register_token_analysis")
+        if reg is None:
+            continue
+        number_positions = reg.get("number_positions", [])
+        grid_h = r.get("grid_h")
+        grid_w = r.get("grid_w")
+        if not number_positions or grid_h is None or grid_w is None:
+            continue
+
+        num_contributing += 1
+        for pos in number_positions:
+            row_frac = (pos // grid_w + 0.5) / grid_h
+            col_frac = (pos % grid_w + 0.5) / grid_w
+            bin_r = min(int(row_frac * resolution), resolution - 1)
+            bin_c = min(int(col_frac * resolution), resolution - 1)
+            heatmap[bin_r, bin_c] += 1
+
+    if num_contributing == 0:
+        print("  No images with grid dimensions and number positions — skipping heatmap")
+        return
+
+    heatmap /= num_contributing
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    im = ax.imshow(heatmap, cmap="hot", interpolation="nearest", origin="upper")
+    ax.set_title(f"Aggregate number-token spatial heatmap (n={num_contributing})")
+    ax.set_xlabel("Normalized column position")
+    ax.set_ylabel("Normalized row position")
+
+    tick_positions = np.linspace(0, resolution - 1, 5)
+    tick_labels = [f"{x:.1f}" for x in np.linspace(0, 1, 5)]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels)
+    ax.set_yticks(tick_positions)
+    ax.set_yticklabels(tick_labels)
+
+    fig.colorbar(im, ax=ax, label="Mean count per image")
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"  Heatmap saved to {output_path}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -563,6 +628,26 @@ def main():
 
             results.append(result)
 
+        # Backfill grid dims for old results that lack them
+        needs_grid = any(r.get("grid_h") is None for r in results)
+        if needs_grid:
+            print("Backfilling grid dimensions from dataset images...")
+            from datasets import load_dataset
+
+            ds = load_dataset(args.dataset, split="train")
+            ps, sms = resolve_patch_params(None, args.model)
+            factor = ps * sms
+            for r in results:
+                if r.get("grid_h") is not None:
+                    continue
+                idx = r["idx"]
+                image = ds[idx]["image"]
+                if image is None:
+                    continue
+                rh, rw = smart_resize(image.height, image.width, factor=factor)
+                r["grid_h"] = rh // factor
+                r["grid_w"] = rw // factor
+
     else:
         # Normal mode: run forward passes
         torch.manual_seed(args.seed)
@@ -647,6 +732,13 @@ def main():
                 # Step 2: Get image token range
                 start_idx, end_idx = model.get_image_token_range(inputs)
 
+                # Compute image token grid dimensions
+                resized_h, resized_w = smart_resize(
+                    image.height, image.width, factor=model.image_factor
+                )
+                grid_h = resized_h // model.image_factor
+                grid_w = resized_w // model.image_factor
+
                 # Step 3: Cache hidden states and forward
                 with model.run_with_cache(["lm.blocks.*.hook_resid_post", "lm.blocks.0.hook_resid_pre"]):
                     fwd_output = model.forward(inputs)
@@ -717,6 +809,8 @@ def main():
                     "generated_text": generated_text,
                     "model_answer": model_answer,
                     "num_image_tokens": end_idx - start_idx + 1,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
                     "number_counts": number_counts_serializable,
                     "rank_unfiltered": rank_unfiltered,
                     "rank_filtered": rank_filtered,
@@ -909,6 +1003,12 @@ def main():
             ranks_filtered,
             f"Rank of model answer (filtered, threshold={args.prob_threshold})",
             plots_dir / "rank_histogram_filtered.png",
+        )
+
+    # Create aggregate spatial heatmaps at multiple resolutions
+    for res in [128, 64, 32, 16]:
+        create_aggregate_heatmap(
+            results, plots_dir / f"number_positions_heatmap_{res}x{res}.png", resolution=res
         )
 
 
