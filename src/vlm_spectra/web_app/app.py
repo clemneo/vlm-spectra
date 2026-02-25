@@ -215,6 +215,36 @@ def direct_logit_attribution_analysis():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/logit-lens', methods=['POST'])
+def logit_lens_analysis():
+    """Run logit lens analysis on uploaded image"""
+    if not model_manager.is_ready:
+        return jsonify({'error': 'Model not ready yet'}), 503
+
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        task = data.get('task', 'Click on the relevant element.')
+        assistant_prefill = data.get('assistant_prefill', '')
+
+        if not filename:
+            return jsonify({'error': 'No filename provided'}), 400
+
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+
+        result = model_manager.logit_lens_analysis(
+            image_path=image_path,
+            task=task,
+            assistant_prefill=assistant_prefill
+        )
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/attention', methods=['POST'])
 def attention_analysis():
     """Run attention analysis for a specific layer and head"""

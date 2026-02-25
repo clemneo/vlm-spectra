@@ -353,6 +353,45 @@
             </div>
         </div>
 
+        <!-- Logit Lens Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#logitLensSection" aria-expanded="false">
+                    <span class="me-2 collapse-icon">&#9654;</span>Logit Lens
+                </button>
+            </div>
+            <div class="collapse" id="logitLensSection">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-primary" id="analyzeLogitLensBtn" disabled>
+                            <span class="spinner-border spinner-border-sm me-2 d-none" id="logitLensSpinner"></span>
+                            Analyze Logit Lens
+                        </button>
+                        <small class="text-muted ms-3">
+                            <i class="fas fa-info-circle"></i>
+                            Shows top token predictions at every layer and position in the sequence
+                        </small>
+                    </div>
+                    <div id="logitLensContainer" class="d-none">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="logitLensShadingToggle" checked>
+                            <label class="form-check-label" for="logitLensShadingToggle">Shade by top token probability</label>
+                        </div>
+                        <!-- Image with patch highlight overlay -->
+                        <div class="mb-3" id="logitLensImageContainer">
+                            <div class="position-relative d-inline-block">
+                                <img id="logitLensImage" src="" alt="Image" class="img-fluid border" style="max-height: 300px;">
+                                <canvas id="logitLensOverlay" class="position-absolute top-0 start-0" style="pointer-events: none;"></canvas>
+                            </div>
+                        </div>
+                        <!-- Scrollable table -->
+                        <div id="logitLensTableWrapper" style="overflow: auto; max-height: 600px; max-width: 100%; border: 1px solid #dee2e6; position: relative;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Attention Explorer Section -->
         <div class="card mb-3">
             <div class="card-header p-2">
