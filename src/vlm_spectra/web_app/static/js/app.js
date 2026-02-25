@@ -16,14 +16,21 @@ class DemoApp {
         this.generatedImage = null;
         this.isGridCreated = false;
 
+        // Dataset state
+        this.datasets = [];
+        this.currentDataset = null;
+        this.currentEntryIndex = 0;
+
         this.initializeEventListeners();
         this.initializeModeSelector();
+        this.initializeDatasetControls();
         // Delay initial checks to let external resources load
         setTimeout(() => {
             this.checkDependencies();
             this.loadModelOptions().finally(() => {
                 this.checkModelStatus();
             });
+            this.loadDatasets();
         }, 500);
     }
     
@@ -190,6 +197,147 @@ class DemoApp {
                 }
             });
         }
+    }
+
+    initializeDatasetControls() {
+        const selector = document.getElementById('datasetSelector');
+        const prevBtn = document.getElementById('datasetPrev');
+        const nextBtn = document.getElementById('datasetNext');
+
+        if (selector) {
+            selector.addEventListener('change', (e) => {
+                const id = e.target.value;
+                if (id) {
+                    this.selectDataset(id);
+                } else {
+                    this.clearDataset();
+                }
+            });
+        }
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                if (this.currentDataset && this.currentEntryIndex > 0) {
+                    this.loadDatasetEntry(this.currentEntryIndex - 1);
+                }
+            });
+        }
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                if (this.currentDataset && this.currentEntryIndex < this.currentDataset.entries.length - 1) {
+                    this.loadDatasetEntry(this.currentEntryIndex + 1);
+                }
+            });
+        }
+    }
+
+    async loadDatasets() {
+        try {
+            const response = await fetch('/api/datasets');
+            const datasets = await response.json();
+            this.datasets = datasets;
+
+            if (datasets.length === 0) return;
+
+            const bar = document.getElementById('datasetBar');
+            const selector = document.getElementById('datasetSelector');
+            if (!bar || !selector) return;
+
+            bar.classList.remove('d-none');
+            // Keep the "None" option, add datasets
+            datasets.forEach(ds => {
+                const opt = document.createElement('option');
+                opt.value = ds.id;
+                opt.textContent = `${ds.name} (${ds.num_entries} entries)`;
+                selector.appendChild(opt);
+            });
+        } catch (error) {
+            console.error('Error loading datasets:', error);
+        }
+    }
+
+    async selectDataset(id) {
+        try {
+            const response = await fetch(`/api/datasets/${id}`);
+            if (!response.ok) throw new Error('Failed to load dataset');
+            const dataset = await response.json();
+            this.currentDataset = dataset;
+            this.currentEntryIndex = 0;
+
+            // Show description
+            const desc = document.getElementById('datasetDescription');
+            if (desc) desc.textContent = dataset.description || '';
+
+            // Show nav
+            const nav = document.getElementById('datasetNav');
+            if (nav) nav.style.setProperty('display', 'flex', 'important');
+
+            // Load first entry
+            await this.loadDatasetEntry(0);
+        } catch (error) {
+            console.error('Error selecting dataset:', error);
+        }
+    }
+
+    async loadDatasetEntry(index) {
+        if (!this.currentDataset) return;
+        this.currentEntryIndex = index;
+        this.updateDatasetNav();
+
+        try {
+            const response = await fetch(`/api/datasets/${this.currentDataset.id}/load-entry`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
+            });
+            const result = await response.json();
+            if (!result.success) {
+                console.error('Failed to load entry:', result.error);
+                return;
+            }
+
+            // Switch to upload mode if not already
+            const modeSelector = document.getElementById('inputModeSelector');
+            if (modeSelector && modeSelector.value !== 'upload') {
+                modeSelector.value = 'upload';
+                modeSelector.dispatchEvent(new Event('change'));
+            }
+
+            // Set image as uploaded
+            this.uploadedImage = { filename: result.filename, url: result.url };
+            this.showImagePreview(result.url);
+
+            // Fill task and prefill fields
+            const taskInput = document.getElementById('task');
+            const prefillInput = document.getElementById('assistantPrefill');
+            if (taskInput && result.task) taskInput.value = result.task;
+            if (prefillInput) prefillInput.value = result.assistant_prefill || '';
+
+            // Enable analysis buttons
+            this.enableAnalysisButtons();
+        } catch (error) {
+            console.error('Error loading dataset entry:', error);
+        }
+    }
+
+    updateDatasetNav() {
+        if (!this.currentDataset) return;
+        const total = this.currentDataset.entries.length;
+        const counter = document.getElementById('datasetCounter');
+        const prevBtn = document.getElementById('datasetPrev');
+        const nextBtn = document.getElementById('datasetNext');
+
+        if (counter) counter.textContent = `${this.currentEntryIndex + 1} / ${total}`;
+        if (prevBtn) prevBtn.disabled = this.currentEntryIndex <= 0;
+        if (nextBtn) nextBtn.disabled = this.currentEntryIndex >= total - 1;
+    }
+
+    clearDataset() {
+        this.currentDataset = null;
+        this.currentEntryIndex = 0;
+        const nav = document.getElementById('datasetNav');
+        if (nav) nav.style.setProperty('display', 'none', 'important');
+        const desc = document.getElementById('datasetDescription');
+        if (desc) desc.textContent = '';
     }
 
     async fetchPatchInfo() {

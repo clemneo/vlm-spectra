@@ -1,0 +1,16 @@
+{
+  "name": "Example Dataset",
+  "description": "A sample dataset demonstrating the dataset loading feature.",
+  "entries": [
+    {
+      "image": "sample1.png",
+      "task": "What is in the image?",
+      "assistant_prefill": ""
+    },
+    {
+      "image": "sample2.png",
+      "task": "Click on the red button.",
+      "assistant_prefill": "{\"action\": \""
+    }
+  ]
+}
