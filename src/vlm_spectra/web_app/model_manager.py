@@ -366,9 +366,15 @@ class ModelManager:
                         if torch.is_tensor(subvalue):
                             value[subkey] = subvalue.to(self.model.device)
             
-            # Run forward pass with cache to get attention heads and MLP outputs
+            # Run forward pass with cache to get attention heads, MLP outputs,
+            # and the final residual stream (needed for frozen norm in DLA)
+            last_layer = self.model.adapter.lm_num_layers - 1
             start_time = time.time()
-            with self.model.run_with_cache(["lm.blocks.*.attn.hook_head_out", "lm.blocks.*.mlp.hook_out"]):
+            with self.model.run_with_cache([
+                "lm.blocks.*.attn.hook_head_out",
+                "lm.blocks.*.mlp.hook_out",
+                f"lm.blocks.{last_layer}.hook_resid_post",
+            ]):
                 outputs = self.model.forward(inputs)
             inference_time = time.time() - start_time
             
@@ -410,8 +416,16 @@ class ModelManager:
                 if mlp_key in self.model.cache:
                     mlp_outputs[layer_idx] = self.model.cache[mlp_key][0]  # Remove batch dimension
             
+            # Extract the final residual stream at last token position for frozen norm
+            resid_key = f"lm.blocks.{last_layer}.hook_resid_post"
+            residual_stream = self.model.cache[resid_key][0, -1, :]  # [hidden_dim]
+
             # Compute DLA for all top 10 tokens
-            dla_results = self._compute_dla_for_tokens(attention_heads, mlp_outputs, [token['token_id'] for token in top_tokens])
+            dla_results = self._compute_dla_for_tokens(
+                attention_heads, mlp_outputs,
+                [token['token_id'] for token in top_tokens],
+                residual_stream,
+            )
 
             # Extract filename from path and create proper URL
             filename = os.path.basename(image_path)
@@ -434,17 +448,36 @@ class ModelManager:
                 'error': str(e)
             }
 
-    def _compute_dla_for_tokens(self, attention_heads, mlp_outputs, token_ids):
-        """Compute direct logit attribution for given tokens"""
+    def _compute_dla_for_tokens(self, attention_heads, mlp_outputs, token_ids, residual_stream):
+        """Compute direct logit attribution for given tokens using frozen norm.
+
+        Uses the "linearized LayerNorm" approach: the RMS scale factor is
+        computed once from the full residual stream and applied uniformly to
+        all components.  This gives a valid linear decomposition where
+        individual contributions sum to the logit (embedding baseline excluded).
+        """
         # Get the unembedding matrix (lm_head) and normalization layer
         lm_head = self.model.model.lm_head
         norm_layer = self.model.adapter.lm_norm
         W_U = lm_head.weight  # Shape: (vocab_size, hidden_dim)
-        
-        # Determine the device from where the norm layer weights are located
+
         norm_device = norm_layer.weight.device
         lm_head_device = W_U.device
-        
+
+        # --- Frozen norm: compute shared RMS scale from full residual stream ---
+        # RMSNorm(x) = gamma * x / sqrt(mean(x^2) + eps)
+        # We freeze the denominator using the full residual stream so the
+        # decomposition is linear: contribution_i = (gamma / rms) * comp_i @ W_U^T
+        eps = getattr(norm_layer, 'variance_epsilon', getattr(norm_layer, 'eps', 1e-6))
+        residual = residual_stream.to(norm_device).to(torch.float32)
+        rms_scale = torch.rsqrt(residual.pow(2).mean(-1) + eps)  # scalar
+        frozen_scale = (norm_layer.weight * rms_scale).to(lm_head_device)  # [hidden_dim]
+
+        # Index only the target rows from W_U first, then scale — avoids
+        # materializing the full [vocab_size, hidden_dim] scaled matrix.
+        token_id_tensor = torch.tensor(token_ids, device=lm_head_device, dtype=torch.long)
+        W_U_target = (W_U[token_id_tensor, :] * frozen_scale.unsqueeze(0)).to(W_U.dtype)  # [num_tokens, hidden_dim]
+
         num_layers = self.model.adapter.lm_num_layers
         if attention_heads:
             first_layer = sorted(attention_heads.keys())[0]
@@ -452,65 +485,31 @@ class ModelManager:
         else:
             num_heads = 0
         num_tokens = len(token_ids)
-        
+
         # Initialize results arrays
         head_contributions = np.zeros((num_layers, num_heads, num_tokens))
         layer_att_contributions = np.zeros((num_layers, num_tokens))
         mlp_contributions = np.zeros((num_layers, num_tokens))
-        
+
         # Compute contributions for each layer
         for layer_idx in range(num_layers):
             # Process attention heads
             if layer_idx in attention_heads:
-                layer_head_contribs = np.zeros((num_heads, num_tokens))
-                
-                for head_idx in range(num_heads):
-                    # Get head contribution at final token position
-                    head_contribution = attention_heads[layer_idx][-1, head_idx, :]  # [hidden_dim]
-                    
-                    # Move head_contribution to norm_layer device for normalization
-                    head_contribution_norm = head_contribution.to(norm_device)
-                    
-                    # Apply RMSNorm before language model head (crucial step!)
-                    normalized_head_contribution = norm_layer(head_contribution_norm)  # [hidden_dim]
-                    
-                    # Move normalized output to lm_head device for logit computation
-                    normalized_head_contribution = normalized_head_contribution.to(lm_head_device)
-                    
-                    # Compute logit contribution: normalized_head_contribution @ W_U^T
-                    logit_contributions = normalized_head_contribution @ W_U.T  # [vocab_size]
-                    
-                    # Extract contributions for all tokens
-                    for token_idx, token_id in enumerate(token_ids):
-                        contribution = logit_contributions[token_id].item()
-                        head_contributions[layer_idx, head_idx, token_idx] = contribution
-                        layer_head_contribs[head_idx, token_idx] = contribution
-                
-                # Sum head contributions for layer attention contribution
-                layer_att_contributions[layer_idx, :] = np.sum(layer_head_contribs, axis=0)
-            
+                # All heads at once: [num_heads, hidden_dim] (last token position)
+                all_heads = attention_heads[layer_idx][-1, :, :].to(lm_head_device)  # [num_heads, hidden_dim]
+
+                # Compute logit contributions for all heads and target tokens at once
+                # [num_heads, hidden_dim] @ [hidden_dim, num_tokens] -> [num_heads, num_tokens]
+                head_logits = all_heads @ W_U_target.T
+                head_contributions[layer_idx] = head_logits.float().cpu().numpy()
+                layer_att_contributions[layer_idx] = head_logits.sum(dim=0).float().cpu().numpy()
+
             # Process MLP outputs
             if layer_idx in mlp_outputs:
-                # Get MLP output at final token position
-                mlp_output = mlp_outputs[layer_idx][-1, :]  # [hidden_dim]
-                
-                # Move mlp_output to norm_layer device for normalization
-                mlp_output_norm = mlp_output.to(norm_device)
-                
-                # Apply RMSNorm before language model head (crucial step!)
-                normalized_mlp_output = norm_layer(mlp_output_norm)  # [hidden_dim]
-                
-                # Move normalized output to lm_head device for logit computation
-                normalized_mlp_output = normalized_mlp_output.to(lm_head_device)
-                
-                # Compute logit contribution: normalized_mlp_output @ W_U^T
-                logit_contributions = normalized_mlp_output @ W_U.T  # [vocab_size]
-                
-                # Extract contributions for all tokens
-                for token_idx, token_id in enumerate(token_ids):
-                    contribution = logit_contributions[token_id].item()
-                    mlp_contributions[layer_idx, token_idx] = contribution
-        
+                mlp_output = mlp_outputs[layer_idx][-1, :].to(lm_head_device)  # [hidden_dim]
+                mlp_logits = mlp_output @ W_U_target.T  # [num_tokens]
+                mlp_contributions[layer_idx] = mlp_logits.float().cpu().numpy()
+
         return {
             'head_contributions': head_contributions.tolist(),  # [layers, heads, tokens]
             'layer_att_contributions': layer_att_contributions.tolist(),  # [layers, tokens]
