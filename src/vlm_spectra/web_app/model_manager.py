@@ -501,14 +501,14 @@ class ModelManager:
                 # Compute logit contributions for all heads and target tokens at once
                 # [num_heads, hidden_dim] @ [hidden_dim, num_tokens] -> [num_heads, num_tokens]
                 head_logits = all_heads @ W_U_target.T
-                head_contributions[layer_idx] = head_logits.float().cpu().numpy()
-                layer_att_contributions[layer_idx] = head_logits.sum(dim=0).float().cpu().numpy()
+                head_contributions[layer_idx] = head_logits.float().cpu().detach().numpy()
+                layer_att_contributions[layer_idx] = head_logits.sum(dim=0).float().cpu().detach().numpy()
 
             # Process MLP outputs
             if layer_idx in mlp_outputs:
                 mlp_output = mlp_outputs[layer_idx][-1, :].to(lm_head_device)  # [hidden_dim]
                 mlp_logits = mlp_output @ W_U_target.T  # [num_tokens]
-                mlp_contributions[layer_idx] = mlp_logits.float().cpu().numpy()
+                mlp_contributions[layer_idx] = mlp_logits.float().cpu().detach().numpy()
 
         return {
             'head_contributions': head_contributions.tolist(),  # [layers, heads, tokens]

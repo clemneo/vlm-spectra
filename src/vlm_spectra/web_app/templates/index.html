@@ -341,6 +341,49 @@
 
     <!-- Results Template for Forward Pass Analysis (hidden) -->
     <div id="forwardResultsTemplate" class="d-none">
+        <!-- Analysis Details Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#analysisDetailsSection" aria-expanded="true">
+                    <span class="me-2 collapse-icon">▼</span>Analysis Details
+                </button>
+            </div>
+            <div class="collapse show" id="analysisDetailsSection">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <table class="table table-sm">
+                                <tr>
+                                    <th>Task:</th>
+                                    <td id="taskTextForward"></td>
+                                </tr>
+                                <tr>
+                                    <th>Prefill:</th>
+                                    <td id="prefillTextForward" class="text-muted small"></td>
+                                </tr>
+                                <tr>
+                                    <th>Next Token Position:</th>
+                                    <td id="tokenPosition"></td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <table class="table table-sm">
+                                <tr>
+                                    <th>Image Size:</th>
+                                    <td id="imageSizeForward"></td>
+                                </tr>
+                                <tr>
+                                    <th>Inference Time:</th>
+                                    <td id="inferenceTimeForward"></td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Token Predictions Section -->
         <div class="card mb-3">
             <div class="card-header p-2">
@@ -371,164 +414,6 @@
                         </select>
                     </div>
                     <div id="tokenLayerChart" style="height: 400px; width: 100%;"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Logit Lens Section -->
-        <div class="card mb-3">
-            <div class="card-header p-2">
-                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#logitLensSection" aria-expanded="false">
-                    <span class="me-2 collapse-icon">&#9654;</span>Logit Lens
-                </button>
-            </div>
-            <div class="collapse" id="logitLensSection">
-                <div class="card-body">
-                    <div class="mb-3">
-                        <button type="button" class="btn btn-primary" id="analyzeLogitLensBtn" disabled>
-                            <span class="spinner-border spinner-border-sm me-2 d-none" id="logitLensSpinner"></span>
-                            Analyze Logit Lens
-                        </button>
-                        <small class="text-muted ms-3">
-                            <i class="fas fa-info-circle"></i>
-                            Shows top token predictions at every layer and position in the sequence
-                        </small>
-                    </div>
-                    <div id="logitLensContainer" class="d-none">
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" id="logitLensShadingToggle" checked>
-                            <label class="form-check-label" for="logitLensShadingToggle">Shade by top token probability</label>
-                        </div>
-                        <!-- Image with patch highlight overlay -->
-                        <div class="mb-3" id="logitLensImageContainer">
-                            <div class="position-relative d-inline-block">
-                                <img id="logitLensImage" src="" alt="Image" class="img-fluid border" style="max-height: 300px;">
-                                <canvas id="logitLensOverlay" class="position-absolute top-0 start-0" style="pointer-events: none;"></canvas>
-                            </div>
-                        </div>
-                        <!-- Scrollable table -->
-                        <div id="logitLensTableWrapper" style="overflow: auto; max-height: 600px; max-width: 100%; border: 1px solid #dee2e6; position: relative;">
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Attention Explorer Section -->
-        <div class="card mb-3">
-            <div class="card-header p-2">
-                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#attentionSection" aria-expanded="false">
-                    <span class="me-2 collapse-icon">▶</span>Attention Explorer
-                </button>
-            </div>
-            <div class="collapse" id="attentionSection">
-                <div class="card-body">
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label for="attentionLayerSelector" class="form-label">Select Layer:</label>
-                            <div class="input-group">
-                                <select class="form-select" id="attentionLayerSelector">
-                                    <option value="">Select a layer...</option>
-                                </select>
-                                <button class="btn btn-outline-secondary" type="button" id="attentionLayerDecrement">
-                                    <i class="fas fa-minus"></i>
-                                </button>
-                                <button class="btn btn-outline-secondary" type="button" id="attentionLayerIncrement">
-                                    <i class="fas fa-plus"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <label for="attentionHeadSelector" class="form-label">Select Head:</label>
-                            <div class="input-group">
-                                <select class="form-select" id="attentionHeadSelector">
-                                    <option value="">Select a head...</option>
-                                </select>
-                                <button class="btn btn-outline-secondary" type="button" id="attentionHeadDecrement">
-                                    <i class="fas fa-minus"></i>
-                                </button>
-                                <button class="btn btn-outline-secondary" type="button" id="attentionHeadIncrement">
-                                    <i class="fas fa-plus"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <button type="button" class="btn btn-primary" id="analyzeAttentionBtn" disabled>
-                            <span class="spinner-border spinner-border-sm me-2 d-none" id="attentionSpinner"></span>
-                            Analyze Attention
-                        </button>
-                        <small class="text-muted ms-3">
-                            <i class="fas fa-info-circle"></i> 
-                            Visualize attention patterns from the last token to all image patches and text tokens
-                        </small>
-                    </div>
-                    
-                    <!-- Attention visualization container -->
-                    <div id="attentionVisualization" class="d-none">
-                        <!-- Attention summary info -->
-                        <div class="mb-3">
-                            <div class="alert alert-info">
-                                <strong>Viewing:</strong> <span id="attentionCurrentView">Layer 0, Head 0</span> | 
-                                <strong>Query:</strong> <span id="attentionQueryInfo">Last token position</span>
-                            </div>
-                        </div>
-                        
-                        <!-- Main visualization area with two columns -->
-                        <div class="row">
-                            <!-- Left column: Image and text -->
-                            <div class="col-md-6">
-                                <!-- Image with attention overlay -->
-                                <div class="card mb-3">
-                                    <div class="card-header">
-                                        <h6 class="mb-0">Image Attention Overlay</h6>
-                                    </div>
-                                    <div class="card-body">
-                                        <div class="position-relative">
-                                            <img id="attentionImage" src="" alt="Image with attention overlay" class="img-fluid border">
-                                            <canvas id="attentionOverlayCanvas" class="position-absolute top-0 start-0"></canvas>
-                                        </div>
-                                        <div class="mt-2">
-                                            <small class="text-muted" id="attentionImageInfo">Hover over image patches to see attention weights</small>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Text tokens with attention highlighting -->
-                                <div class="card">
-                                    <div class="card-header">
-                                        <h6 class="mb-0">Text Token Attention</h6>
-                                    </div>
-                                    <div class="card-body">
-                                        <div id="attentionTextContainer" style="max-height: 300px; overflow-y: auto; font-family: monospace; line-height: 1.6;">
-                                            <!-- Text tokens will be inserted here -->
-                                        </div>
-                                        <div class="mt-2">
-                                            <small class="text-muted">Hover over tokens to see attention weights. Darker background = higher attention.</small>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Right column: Attention heatmap -->
-                            <div class="col-md-6">
-                                <div class="card">
-                                    <div class="card-header">
-                                        <h6 class="mb-0">Attention Heatmap</h6>
-                                    </div>
-                                    <div class="card-body">
-                                        <div id="attentionHeatmap" style="height: 500px; width: 100%;"></div>
-                                        <div class="mt-2">
-                                            <small class="text-muted">
-                                                Heatmap shows attention weights from the query token to all positions. 
-                                                Left side: image patches, Right side: text tokens.
-                                            </small>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -579,7 +464,7 @@
                             Analyze DLA
                         </button>
                         <small class="text-muted ms-3">
-                            <i class="fas fa-info-circle"></i> 
+                            <i class="fas fa-info-circle"></i>
                             Shows how different model components contribute to the selected token's prediction
                         </small>
                     </div>
@@ -588,43 +473,158 @@
             </div>
         </div>
 
-        <!-- Analysis Details Section -->
+        <!-- Attention Explorer Section -->
         <div class="card mb-3">
             <div class="card-header p-2">
-                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#analysisDetailsSection" aria-expanded="true">
-                    <span class="me-2 collapse-icon">▼</span>Analysis Details
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#attentionSection" aria-expanded="false">
+                    <span class="me-2 collapse-icon">▶</span>Attention Explorer
                 </button>
             </div>
-            <div class="collapse show" id="analysisDetailsSection">
+            <div class="collapse" id="attentionSection">
                 <div class="card-body">
-                    <div class="row">
+                    <div class="row mb-3">
                         <div class="col-md-6">
-                            <table class="table table-sm">
-                                <tr>
-                                    <th>Task:</th>
-                                    <td id="taskTextForward"></td>
-                                </tr>
-                                <tr>
-                                    <th>Prefill:</th>
-                                    <td id="prefillTextForward" class="text-muted small"></td>
-                                </tr>
-                                <tr>
-                                    <th>Next Token Position:</th>
-                                    <td id="tokenPosition"></td>
-                                </tr>
-                            </table>
+                            <label for="attentionLayerSelector" class="form-label">Select Layer:</label>
+                            <div class="input-group">
+                                <select class="form-select" id="attentionLayerSelector">
+                                    <option value="">Select a layer...</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionLayerDecrement">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionLayerIncrement">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="col-md-6">
-                            <table class="table table-sm">
-                                <tr>
-                                    <th>Image Size:</th>
-                                    <td id="imageSizeForward"></td>
-                                </tr>
-                                <tr>
-                                    <th>Inference Time:</th>
-                                    <td id="inferenceTimeForward"></td>
-                                </tr>
-                            </table>
+                            <label for="attentionHeadSelector" class="form-label">Select Head:</label>
+                            <div class="input-group">
+                                <select class="form-select" id="attentionHeadSelector">
+                                    <option value="">Select a head...</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionHeadDecrement">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="attentionHeadIncrement">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-primary" id="analyzeAttentionBtn" disabled>
+                            <span class="spinner-border spinner-border-sm me-2 d-none" id="attentionSpinner"></span>
+                            Analyze Attention
+                        </button>
+                        <small class="text-muted ms-3">
+                            <i class="fas fa-info-circle"></i>
+                            Visualize attention patterns from the last token to all image patches and text tokens
+                        </small>
+                    </div>
+
+                    <!-- Attention visualization container -->
+                    <div id="attentionVisualization" class="d-none">
+                        <!-- Attention summary info -->
+                        <div class="mb-3">
+                            <div class="alert alert-info">
+                                <strong>Viewing:</strong> <span id="attentionCurrentView">Layer 0, Head 0</span> |
+                                <strong>Query:</strong> <span id="attentionQueryInfo">Last token position</span>
+                            </div>
+                        </div>
+
+                        <!-- Main visualization area with two columns -->
+                        <div class="row">
+                            <!-- Left column: Image and text -->
+                            <div class="col-md-6">
+                                <!-- Image with attention overlay -->
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Image Attention Overlay</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="position-relative">
+                                            <img id="attentionImage" src="" alt="Image with attention overlay" class="img-fluid border">
+                                            <canvas id="attentionOverlayCanvas" class="position-absolute top-0 start-0"></canvas>
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted" id="attentionImageInfo">Hover over image patches to see attention weights</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Text tokens with attention highlighting -->
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Text Token Attention</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="attentionTextContainer" style="max-height: 300px; overflow-y: auto; font-family: monospace; line-height: 1.6;">
+                                            <!-- Text tokens will be inserted here -->
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">Hover over tokens to see attention weights. Darker background = higher attention.</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right column: Attention heatmap -->
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Attention Heatmap</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="attentionHeatmap" style="height: 500px; width: 100%;"></div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">
+                                                Heatmap shows attention weights from the query token to all positions.
+                                                Left side: image patches, Right side: text tokens.
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logit Lens Section -->
+        <div class="card mb-3">
+            <div class="card-header p-2">
+                <button class="btn btn-link p-0 text-decoration-none w-100 text-start fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#logitLensSection" aria-expanded="false">
+                    <span class="me-2 collapse-icon">&#9654;</span>Logit Lens
+                </button>
+            </div>
+            <div class="collapse" id="logitLensSection">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-primary" id="analyzeLogitLensBtn" disabled>
+                            <span class="spinner-border spinner-border-sm me-2 d-none" id="logitLensSpinner"></span>
+                            Analyze Logit Lens
+                        </button>
+                        <small class="text-muted ms-3">
+                            <i class="fas fa-info-circle"></i>
+                            Shows top token predictions at every layer and position in the sequence
+                        </small>
+                    </div>
+                    <div id="logitLensContainer" class="d-none">
+                        <!-- Image with patch highlight overlay -->
+                        <div class="mb-3" id="logitLensImageContainer">
+                            <div class="position-relative d-inline-block">
+                                <img id="logitLensImage" src="" alt="Image" class="img-fluid border" style="max-height: 300px;">
+                                <canvas id="logitLensOverlay" class="position-absolute top-0 start-0" style="pointer-events: none;"></canvas>
+                            </div>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="logitLensShadingToggle" checked>
+                            <label class="form-check-label" for="logitLensShadingToggle">Shade by top token probability</label>
+                        </div>
+                        <!-- Scrollable table -->
+                        <div id="logitLensTableWrapper" style="overflow: auto; max-height: 600px; max-width: 100%; border: 1px solid #dee2e6; position: relative;">
                         </div>
                     </div>
                 </div>
