@@ -10,7 +10,9 @@ Seven benchmark conditions:
   C         - output_attentions=True (switches to Eager)
   D         - Hooks: attn.hook_pattern, 32 virtual hooks (SDPA/Flash)
   E         - Activation patching via run_with_hooks on all layers' hook_resid_post
+              (patch hooks built once from first example, reused for all)
   F         - Head patching via run_with_hooks on all layers' attn.hook_z (head 0)
+              (patch hooks built once from first example, reused for all)
 
 Usage:
     uv run python examples/benchmark_hooks_vs_native.py --num-images 5 --warmup 1
@@ -266,63 +268,42 @@ def run_condition_d(model: HookedVLM, inputs) -> tuple[float, float]:
     return forward_ms, total_ms
 
 
-def run_condition_e(model: HookedVLM, inputs) -> tuple[float, float]:
-    """Activation patching via run_with_hooks on all layers' hook_resid_post.
+def build_patch_resid_hooks(
+    model: HookedVLM, example_inputs,
+) -> list[tuple[str, PatchActivation]]:
+    """Capture resid_post from a single example and build patch hooks.
 
-    Pre-captures activations (untimed), then times one run_with_hooks forward pass
-    that replaces every layer's residual stream with the cached values.
-    Returns (forward_ms, total_ms).
+    The returned hooks can be reused across many forward passes — the patched
+    values will be "wrong" for other inputs but the GPU work is identical,
+    which is all that matters for a timing benchmark.
     """
     num_layers = model.lm_num_layers
-
-    # Untimed setup: capture activations to use as replacements
     cache_hooks = ["lm.blocks.*.hook_resid_post"]
     with model.run_with_cache(cache_hooks) as cache:
-        model.forward(inputs)
+        model.forward(example_inputs)
 
-    # Build per-layer patch hooks
     hooks = []
     for layer_idx in range(num_layers):
         hook_name = f"lm.blocks.{layer_idx}.hook_resid_post"
         # cache[hook_name] is [batch, seq, hidden]; PatchActivation expects [seq, hidden]
         replacement = cache[hook_name][0]
         hooks.append((hook_name, PatchActivation(replacement=replacement)))
-
-    # Timed: run_with_hooks context + forward
-    torch.cuda.synchronize()
-    t0 = time.perf_counter()
-
-    with model.run_with_hooks(hooks):
-        torch.cuda.synchronize()
-        t_pre = time.perf_counter()
-        model.forward(inputs)
-        torch.cuda.synchronize()
-        t1 = time.perf_counter()
-
-    torch.cuda.synchronize()
-    t2 = time.perf_counter()
-
-    forward_ms = (t1 - t_pre) * 1000
-    total_ms = (t2 - t0) * 1000
-    return forward_ms, total_ms
+    return hooks
 
 
-def run_condition_f(model: HookedVLM, inputs) -> tuple[float, float]:
-    """Head patching via run_with_hooks on all layers' attn.hook_z (head 0).
+def build_patch_head_hooks(
+    model: HookedVLM, example_inputs,
+) -> list[tuple[str, PatchHead]]:
+    """Capture attn.hook_z from a single example and build head-patch hooks.
 
-    Pre-captures attn.hook_z activations (untimed), extracts head 0,
-    then times one run_with_hooks forward pass that patches head 0 at every layer.
-    Returns (forward_ms, total_ms).
+    See build_patch_resid_hooks for rationale on reuse.
     """
     num_layers = model.lm_num_layers
     num_heads = model.adapter.lm_num_heads
-
-    # Untimed setup: capture hook_z activations
     cache_hooks = ["lm.blocks.*.attn.hook_z"]
     with model.run_with_cache(cache_hooks) as cache:
-        model.forward(inputs)
+        model.forward(example_inputs)
 
-    # Build per-layer head-patch hooks (head 0)
     hooks = []
     for layer_idx in range(num_layers):
         hook_name = f"lm.blocks.{layer_idx}.attn.hook_z"
@@ -337,24 +318,51 @@ def run_condition_f(model: HookedVLM, inputs) -> tuple[float, float]:
                 num_heads=num_heads,
             ),
         ))
+    return hooks
 
-    # Timed: run_with_hooks context + forward
-    torch.cuda.synchronize()
-    t0 = time.perf_counter()
 
-    with model.run_with_hooks(hooks):
+def _make_run_condition_e(patch_hooks):
+    """Return a run_fn that applies pre-built resid patch hooks."""
+    def run_condition_e(model: HookedVLM, inputs) -> tuple[float, float]:
         torch.cuda.synchronize()
-        t_pre = time.perf_counter()
-        model.forward(inputs)
+        t0 = time.perf_counter()
+
+        with model.run_with_hooks(patch_hooks):
+            torch.cuda.synchronize()
+            t_pre = time.perf_counter()
+            model.forward(inputs)
+            torch.cuda.synchronize()
+            t1 = time.perf_counter()
+
         torch.cuda.synchronize()
-        t1 = time.perf_counter()
+        t2 = time.perf_counter()
 
-    torch.cuda.synchronize()
-    t2 = time.perf_counter()
+        forward_ms = (t1 - t_pre) * 1000
+        total_ms = (t2 - t0) * 1000
+        return forward_ms, total_ms
+    return run_condition_e
 
-    forward_ms = (t1 - t_pre) * 1000
-    total_ms = (t2 - t0) * 1000
-    return forward_ms, total_ms
+
+def _make_run_condition_f(patch_hooks):
+    """Return a run_fn that applies pre-built head patch hooks."""
+    def run_condition_f(model: HookedVLM, inputs) -> tuple[float, float]:
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+
+        with model.run_with_hooks(patch_hooks):
+            torch.cuda.synchronize()
+            t_pre = time.perf_counter()
+            model.forward(inputs)
+            torch.cuda.synchronize()
+            t1 = time.perf_counter()
+
+        torch.cuda.synchronize()
+        t2 = time.perf_counter()
+
+        forward_ms = (t1 - t_pre) * 1000
+        total_ms = (t2 - t0) * 1000
+        return forward_ms, total_ms
+    return run_condition_f
 
 
 # ---------------------------------------------------------------------------
@@ -711,16 +719,28 @@ def run_all_conditions(
     )
     cleanup()
 
+    # Build patch hooks once from the first example (untimed).
+    # Values are "wrong" for other inputs but GPU work is identical.
+    setup_inputs = prepare_inputs(model, examples[0])
+
     print(f"\n--- Condition E: Activation patching hook_resid_post ({num_layers} hooks) ---")
+    print("  Building patch hooks from first example...")
+    resid_hooks = build_patch_resid_hooks(model, setup_inputs)
+    cleanup()
     results["E"] = run_benchmark_condition(
-        "E", f"Patch resid_post ({num_layers} hooks, SDPA)", run_condition_e,
+        "E", f"Patch resid_post ({num_layers} hooks, SDPA)",
+        _make_run_condition_e(resid_hooks),
         model, examples, warmup, returns_total=True,
     )
     cleanup()
 
     print(f"\n--- Condition F: Head patching attn.hook_z head 0 ({num_layers} hooks) ---")
+    print("  Building patch hooks from first example...")
+    head_hooks = build_patch_head_hooks(model, setup_inputs)
+    cleanup()
     results["F"] = run_benchmark_condition(
-        "F", f"Patch head 0 hook_z ({num_layers} hooks, SDPA)", run_condition_f,
+        "F", f"Patch head 0 hook_z ({num_layers} hooks, SDPA)",
+        _make_run_condition_f(head_hooks),
         model, examples, warmup, returns_total=True,
     )
     cleanup()
@@ -751,8 +771,8 @@ def main():
     parser.add_argument(
         "--num-images",
         type=str,
-        default="100,200,300",
-        help="Comma-separated list of image counts to benchmark (default: 100,200,300)",
+        default="300",
+        help="Comma-separated list of image counts to benchmark (default: 300)",
     )
     parser.add_argument(
         "--warmup",
