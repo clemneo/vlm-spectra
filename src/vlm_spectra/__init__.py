@@ -11,6 +11,8 @@ from vlm_spectra.core.patch_hooks import (
     AddActivation,
     ScaleActivation,
     PatchHead,
+    BlockAttention,
+    SetAttentionMask,
 )
 from vlm_spectra.models.base_adapter import ModelAdapter
 from vlm_spectra.models.registry import ModelRegistry
@@ -31,5 +33,7 @@ __all__ = [
     "AddActivation",
     "ScaleActivation",
     "PatchHead",
+    "BlockAttention",
+    "SetAttentionMask",
     "process_vision_info",
 ]

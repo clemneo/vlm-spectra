@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 import time
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -12,6 +14,7 @@ app.config['SECRET_KEY'] = 'demo-secret-key'
 app.config['UPLOAD_FOLDER'] = os.path.join(script_dir, 'static', 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
+DATASETS_FOLDER = os.path.join(script_dir, 'datasets')
 
 model_manager = ModelManager()
 
@@ -215,6 +218,36 @@ def direct_logit_attribution_analysis():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/logit-lens', methods=['POST'])
+def logit_lens_analysis():
+    """Run logit lens analysis on uploaded image"""
+    if not model_manager.is_ready:
+        return jsonify({'error': 'Model not ready yet'}), 503
+
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        task = data.get('task', 'Click on the relevant element.')
+        assistant_prefill = data.get('assistant_prefill', '')
+
+        if not filename:
+            return jsonify({'error': 'No filename provided'}), 400
+
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+
+        result = model_manager.logit_lens_analysis(
+            image_path=image_path,
+            task=task,
+            assistant_prefill=assistant_prefill
+        )
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/attention', methods=['POST'])
 def attention_analysis():
     """Run attention analysis for a specific layer and head"""
@@ -259,6 +292,82 @@ def attention_analysis():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/datasets')
+def list_datasets():
+    """List available datasets"""
+    datasets = []
+    if not os.path.isdir(DATASETS_FOLDER):
+        return jsonify(datasets)
+    for name in sorted(os.listdir(DATASETS_FOLDER)):
+        meta_path = os.path.join(DATASETS_FOLDER, name, 'dataset.json')
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                datasets.append({
+                    'id': name,
+                    'name': meta.get('name', name),
+                    'description': meta.get('description', ''),
+                    'num_entries': len(meta.get('entries', []))
+                })
+            except (json.JSONDecodeError, OSError):
+                continue
+    return jsonify(datasets)
+
+@app.route('/api/datasets/<dataset_id>')
+def get_dataset(dataset_id):
+    """Get full dataset metadata and entries"""
+    dataset_id = secure_filename(dataset_id)
+    meta_path = os.path.join(DATASETS_FOLDER, dataset_id, 'dataset.json')
+    if not os.path.isfile(meta_path):
+        return jsonify({'error': 'Dataset not found'}), 404
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        meta['id'] = dataset_id
+        return jsonify(meta)
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/datasets/<dataset_id>/load-entry', methods=['POST'])
+def load_dataset_entry(dataset_id):
+    """Copy a dataset entry image to uploads and return its info"""
+    dataset_id = secure_filename(dataset_id)
+    meta_path = os.path.join(DATASETS_FOLDER, dataset_id, 'dataset.json')
+    if not os.path.isfile(meta_path):
+        return jsonify({'error': 'Dataset not found'}), 404
+
+    data = request.get_json() or {}
+    index = data.get('index', 0)
+
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        entries = meta.get('entries', [])
+        if index < 0 or index >= len(entries):
+            return jsonify({'error': 'Entry index out of range'}), 400
+        entry = entries[index]
+
+        src_path = os.path.join(DATASETS_FOLDER, dataset_id, entry['image'])
+        if not os.path.isfile(src_path):
+            return jsonify({'error': f'Image file not found: {entry["image"]}'}), 404
+
+        timestamp = int(time.time())
+        filename = f"{timestamp}_{secure_filename(entry['image'])}"
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        dst_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        shutil.copy2(src_path, dst_path)
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'url': f'/static/uploads/{filename}',
+            'task': entry.get('task', ''),
+            'assistant_prefill': entry.get('assistant_prefill', '')
+        })
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/static/uploads/<filename>')
 def serve_uploaded_image(filename):

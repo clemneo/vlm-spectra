@@ -36,6 +36,7 @@ class HookPoint:
         "attn.hook_v": HookConfig("get_lm_v_proj"),
         "attn.hook_scores": HookConfig("get_lm_attn", is_virtual=True),
         "attn.hook_pattern": HookConfig("get_lm_attn", is_virtual=True),
+        "attn.hook_mask": HookConfig("get_lm_attn", is_pre=True),
         "attn.hook_z": HookConfig("get_lm_o_proj", is_pre=True),
         "attn.hook_out": HookConfig("get_lm_o_proj"),
         "attn.hook_head_out": HookConfig("get_lm_o_proj", is_virtual=True),

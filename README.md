@@ -23,6 +23,8 @@ uv pip install git+https://github.com/clemneo/vlm-spectra.git
 git clone https://github.com/clemneo/vlm-spectra.git
 cd vlm-spectra
 uv sync
+uv sync --extra examples  # if you want to run examples
+uv sync --extra dev       # if you want to run tests
 ```
 
 ### Pre-download Model Weights

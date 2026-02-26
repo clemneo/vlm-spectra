@@ -56,6 +56,9 @@ except ImportError:
 class Qwen25VLAdapter(ModelAdapter):
     SUPPORTED_MODELS = [
         "ByteDance-Seed/UI-TARS-1.5-7B",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen2.5-VL-7B-Instruct",
+        "Qwen/Qwen2.5-VL-72B-Instruct",
     ]
 
     MODEL_CLASS = Qwen2_5_VLForConditionalGeneration

@@ -16,14 +16,21 @@ class DemoApp {
         this.generatedImage = null;
         this.isGridCreated = false;
 
+        // Dataset state
+        this.datasets = [];
+        this.currentDataset = null;
+        this.currentEntryIndex = 0;
+
         this.initializeEventListeners();
         this.initializeModeSelector();
+        this.initializeDatasetControls();
         // Delay initial checks to let external resources load
         setTimeout(() => {
             this.checkDependencies();
             this.loadModelOptions().finally(() => {
                 this.checkModelStatus();
             });
+            this.loadDatasets();
         }, 500);
     }
     
@@ -190,6 +197,147 @@ class DemoApp {
                 }
             });
         }
+    }
+
+    initializeDatasetControls() {
+        const selector = document.getElementById('datasetSelector');
+        const prevBtn = document.getElementById('datasetPrev');
+        const nextBtn = document.getElementById('datasetNext');
+
+        if (selector) {
+            selector.addEventListener('change', (e) => {
+                const id = e.target.value;
+                if (id) {
+                    this.selectDataset(id);
+                } else {
+                    this.clearDataset();
+                }
+            });
+        }
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                if (this.currentDataset && this.currentEntryIndex > 0) {
+                    this.loadDatasetEntry(this.currentEntryIndex - 1);
+                }
+            });
+        }
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                if (this.currentDataset && this.currentEntryIndex < this.currentDataset.entries.length - 1) {
+                    this.loadDatasetEntry(this.currentEntryIndex + 1);
+                }
+            });
+        }
+    }
+
+    async loadDatasets() {
+        try {
+            const response = await fetch('/api/datasets');
+            const datasets = await response.json();
+            this.datasets = datasets;
+
+            if (datasets.length === 0) return;
+
+            const bar = document.getElementById('datasetBar');
+            const selector = document.getElementById('datasetSelector');
+            if (!bar || !selector) return;
+
+            bar.classList.remove('d-none');
+            // Keep the "None" option, add datasets
+            datasets.forEach(ds => {
+                const opt = document.createElement('option');
+                opt.value = ds.id;
+                opt.textContent = `${ds.name} (${ds.num_entries} entries)`;
+                selector.appendChild(opt);
+            });
+        } catch (error) {
+            console.error('Error loading datasets:', error);
+        }
+    }
+
+    async selectDataset(id) {
+        try {
+            const response = await fetch(`/api/datasets/${id}`);
+            if (!response.ok) throw new Error('Failed to load dataset');
+            const dataset = await response.json();
+            this.currentDataset = dataset;
+            this.currentEntryIndex = 0;
+
+            // Show description
+            const desc = document.getElementById('datasetDescription');
+            if (desc) desc.textContent = dataset.description || '';
+
+            // Show nav
+            const nav = document.getElementById('datasetNav');
+            if (nav) nav.style.setProperty('display', 'flex', 'important');
+
+            // Load first entry
+            await this.loadDatasetEntry(0);
+        } catch (error) {
+            console.error('Error selecting dataset:', error);
+        }
+    }
+
+    async loadDatasetEntry(index) {
+        if (!this.currentDataset) return;
+        this.currentEntryIndex = index;
+        this.updateDatasetNav();
+
+        try {
+            const response = await fetch(`/api/datasets/${this.currentDataset.id}/load-entry`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
+            });
+            const result = await response.json();
+            if (!result.success) {
+                console.error('Failed to load entry:', result.error);
+                return;
+            }
+
+            // Switch to upload mode if not already
+            const modeSelector = document.getElementById('inputModeSelector');
+            if (modeSelector && modeSelector.value !== 'upload') {
+                modeSelector.value = 'upload';
+                modeSelector.dispatchEvent(new Event('change'));
+            }
+
+            // Set image as uploaded
+            this.uploadedImage = { filename: result.filename, url: result.url };
+            this.showImagePreview(result.url);
+
+            // Fill task and prefill fields
+            const taskInput = document.getElementById('task');
+            const prefillInput = document.getElementById('assistantPrefill');
+            if (taskInput && result.task) taskInput.value = result.task;
+            if (prefillInput) prefillInput.value = result.assistant_prefill || '';
+
+            // Enable analysis buttons
+            this.enableAnalysisButtons();
+        } catch (error) {
+            console.error('Error loading dataset entry:', error);
+        }
+    }
+
+    updateDatasetNav() {
+        if (!this.currentDataset) return;
+        const total = this.currentDataset.entries.length;
+        const counter = document.getElementById('datasetCounter');
+        const prevBtn = document.getElementById('datasetPrev');
+        const nextBtn = document.getElementById('datasetNext');
+
+        if (counter) counter.textContent = `${this.currentEntryIndex + 1} / ${total}`;
+        if (prevBtn) prevBtn.disabled = this.currentEntryIndex <= 0;
+        if (nextBtn) nextBtn.disabled = this.currentEntryIndex >= total - 1;
+    }
+
+    clearDataset() {
+        this.currentDataset = null;
+        this.currentEntryIndex = 0;
+        const nav = document.getElementById('datasetNav');
+        if (nav) nav.style.setProperty('display', 'none', 'important');
+        const desc = document.getElementById('datasetDescription');
+        if (desc) desc.textContent = '';
     }
 
     async fetchPatchInfo() {
@@ -814,11 +962,14 @@ class DemoApp {
             this.setupTokenLayerAnalysis(resultsContent, result.top_tokens, result.layer_probabilities);
         }
         
+        // Set up logit lens analysis
+        this.setupLogitLensAnalysis(resultsContent);
+
         // Set up attention explorer if model info is available
         if (result.model_info) {
             this.setupAttentionExplorer(resultsContent, result.model_info);
         }
-        
+
         // Set up DLA analysis if data is available (populate token selector)
         this.setupDlaAnalysis(resultsContent, result.top_tokens);
         
@@ -1044,6 +1195,7 @@ class DemoApp {
             { old: 'predictionResultsSection', new: `predictionResultsSection_${timestamp}` },
             { old: 'tokenPredictionsSection', new: `tokenPredictionsSection_${timestamp}` },
             { old: 'tokenLayerSection', new: `tokenLayerSection_${timestamp}` },
+            { old: 'logitLensSection', new: `logitLensSection_${timestamp}` },
             { old: 'attentionSection', new: `attentionSection_${timestamp}` },
             { old: 'dlaSection', new: `dlaSection_${timestamp}` },
             { old: 'analysisDetailsSection', new: `analysisDetailsSection_${timestamp}` }
@@ -1166,6 +1318,283 @@ class DemoApp {
         `;
     }
     
+    // ---- Logit Lens ----
+
+    setupLogitLensAnalysis(resultsContent) {
+        const btn = resultsContent.querySelector('#analyzeLogitLensBtn');
+        if (!btn) return;
+        btn.disabled = false;
+        btn.addEventListener('click', () => {
+            this.handleLogitLensAnalysis();
+        });
+    }
+
+    async handleLogitLensAnalysis() {
+        if (!this.modelReady || this.isPredicting) return;
+        if (this.inputMode === 'upload' && !this.uploadedImage) return;
+        if (this.inputMode === 'generate' && !this.generatedImage) return;
+
+        this.isPredicting = true;
+        const button = document.getElementById('analyzeLogitLensBtn');
+        const spinner = document.getElementById('logitLensSpinner');
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+
+        const imageFilename = this.inputMode === 'upload'
+            ? this.uploadedImage.filename
+            : this.generatedImage.filename;
+
+        const formData = {
+            filename: imageFilename,
+            task: document.getElementById('task').value,
+            assistant_prefill: document.getElementById('assistantPrefill').value
+        };
+
+        try {
+            const response = await fetch('/api/logit-lens', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                const container = document.getElementById('logitLensContainer');
+                container.classList.remove('d-none');
+                this.renderLogitLensTable(result);
+            } else {
+                this.showError(result.error || 'Logit lens analysis failed');
+            }
+        } catch (error) {
+            console.error('Error during logit lens analysis:', error);
+            this.showError('Failed to connect to server for logit lens analysis');
+        } finally {
+            button.disabled = false;
+            spinner.classList.add('d-none');
+            this.isPredicting = false;
+        }
+    }
+
+    renderLogitLensTable(result) {
+        const { all_top_tokens, token_labels, num_layers, image_token_range, grid_info, image_url } = result;
+        const numPositions = token_labels.length;
+
+        // Set up image for patch highlighting
+        const img = document.getElementById('logitLensImage');
+        const canvas = document.getElementById('logitLensOverlay');
+        const imgContainer = document.getElementById('logitLensImageContainer');
+
+        if (image_url && image_token_range.start >= 0) {
+            img.src = image_url;
+            imgContainer.style.display = '';
+        } else {
+            imgContainer.style.display = 'none';
+        }
+
+        // Determine which layers to show (subsample if too many)
+        const maxLayerCols = 60;
+        let layerIndices = [];
+        if (num_layers <= maxLayerCols) {
+            for (let i = 0; i < num_layers; i++) layerIndices.push(i);
+        } else {
+            const step = (num_layers - 1) / (maxLayerCols - 1);
+            for (let i = 0; i < maxLayerCols; i++) {
+                layerIndices.push(Math.round(i * step));
+            }
+        }
+
+        const imgStart = image_token_range.start;
+        const imgEnd = image_token_range.end;
+        let positionIndices = [];
+        for (let i = 0; i < numPositions; i++) {
+            positionIndices.push(i);
+        }
+
+        // Build the table
+        const wrapper = document.getElementById('logitLensTableWrapper');
+        const table = document.createElement('table');
+        table.className = 'logit-lens-table';
+        table.style.cssText = 'border-collapse: separate; border-spacing: 0; font-size: 11px; font-family: monospace;';
+
+        // Header row
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        const cornerTh = document.createElement('th');
+        cornerTh.textContent = 'Pos / Layer';
+        cornerTh.style.cssText = 'position: sticky; top: 0; left: 0; z-index: 3; background: #f8f9fa; padding: 4px 6px; border: 1px solid #dee2e6; min-width: 100px;';
+        headerRow.appendChild(cornerTh);
+
+        for (const li of layerIndices) {
+            const th = document.createElement('th');
+            th.textContent = `L${li}`;
+            th.style.cssText = 'position: sticky; top: 0; z-index: 2; background: #f8f9fa; padding: 4px 6px; border: 1px solid #dee2e6; white-space: nowrap; text-align: center;';
+            headerRow.appendChild(th);
+        }
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        // Body
+        const tbody = document.createElement('tbody');
+
+        // Tooltip element (shared)
+        let tooltip = document.getElementById('logitLensTooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'logitLensTooltip';
+            tooltip.style.cssText = 'display: none; position: fixed; z-index: 9999; background: #222; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-family: monospace; pointer-events: none; max-width: 300px; white-space: pre-line; box-shadow: 0 2px 8px rgba(0,0,0,0.3);';
+            document.body.appendChild(tooltip);
+        }
+
+        // Locked patch state
+        let lockedPatchIdx = null;
+
+        const highlightPatch = (patchIdx) => {
+            if (!img.naturalWidth || imgContainer.style.display === 'none') return;
+            const rect = img.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (patchIdx === null || patchIdx === undefined) return;
+
+            const gw = grid_info.merged_grid_w;
+            const gh = grid_info.merged_grid_h;
+            const row = Math.floor(patchIdx / gw);
+            const col = patchIdx % gw;
+            const epatch = grid_info.effective_patch_size;
+
+            const scaleX = rect.width / grid_info.original_width;
+            const scaleY = rect.height / grid_info.original_height;
+            const imgScaleX = grid_info.original_width / grid_info.resized_width;
+            const imgScaleY = grid_info.original_height / grid_info.resized_height;
+
+            const x = col * epatch * imgScaleX * scaleX;
+            const y = row * epatch * imgScaleY * scaleY;
+            const w = epatch * imgScaleX * scaleX;
+            const h = epatch * imgScaleY * scaleY;
+
+            // Dim everything
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Clear the highlighted patch
+            ctx.clearRect(x, y, w, h);
+            // Border
+            ctx.strokeStyle = '#ff0';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, w, h);
+        };
+
+        for (const pi of positionIndices) {
+            const tr = document.createElement('tr');
+            const isImageToken = imgStart >= 0 && pi >= imgStart && pi <= imgEnd;
+            const patchIdx = isImageToken ? (pi - imgStart) : null;
+
+            // Row header (sticky left)
+            const rowTh = document.createElement('th');
+            const label = token_labels[pi];
+            rowTh.textContent = `${pi}: ${label}`;
+            rowTh.title = `Position ${pi}`;
+            rowTh.style.cssText = 'position: sticky; left: 0; z-index: 1; background: ' + (isImageToken ? '#e8f4fd' : '#f8f9fa') + '; padding: 4px 6px; border: 1px solid #dee2e6; white-space: nowrap; cursor: default;';
+
+            if (isImageToken) {
+                rowTh.style.cursor = 'pointer';
+                rowTh.addEventListener('mouseenter', () => {
+                    if (lockedPatchIdx === null) highlightPatch(patchIdx);
+                });
+                rowTh.addEventListener('mouseleave', () => {
+                    if (lockedPatchIdx === null) highlightPatch(null);
+                });
+                rowTh.addEventListener('click', () => {
+                    if (lockedPatchIdx === patchIdx) {
+                        lockedPatchIdx = null;
+                        highlightPatch(null);
+                    } else {
+                        lockedPatchIdx = patchIdx;
+                        highlightPatch(patchIdx);
+                    }
+                });
+            }
+            tr.appendChild(rowTh);
+
+            // Data cells
+            for (const li of layerIndices) {
+                const td = document.createElement('td');
+                const cellData = all_top_tokens[li][pi]; // [[token, prob], ...]
+                if (cellData && cellData.length > 0) {
+                    const topToken = cellData[0][0];
+                    td.textContent = topToken.replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+                    td.dataset.prob = cellData[0][1];
+                }
+                td.style.cssText += '; padding: 3px 5px; border: 1px solid #dee2e6; white-space: nowrap; text-align: center; max-width: 80px; overflow: hidden; text-overflow: ellipsis; cursor: default;';
+
+                // Hover tooltip showing top-5
+                td.addEventListener('mouseenter', (e) => {
+                    if (!cellData || cellData.length === 0) return;
+                    let lines = `Layer ${li}, Pos ${pi} (${token_labels[pi]})\n`;
+                    for (let k = 0; k < cellData.length; k++) {
+                        const tok = cellData[k][0].replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+                        const prob = (parseFloat(cellData[k][1]) * 100).toFixed(2);
+                        lines += `${k + 1}. "${tok}" ${prob}%\n`;
+                    }
+                    tooltip.textContent = lines;
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (e.clientX + 12) + 'px';
+                    tooltip.style.top = (e.clientY + 12) + 'px';
+                });
+                td.addEventListener('mousemove', (e) => {
+                    tooltip.style.left = (e.clientX + 12) + 'px';
+                    tooltip.style.top = (e.clientY + 12) + 'px';
+                });
+                td.addEventListener('mouseleave', () => {
+                    tooltip.style.display = 'none';
+                });
+
+                // Image patch highlight on hover for image token rows
+                if (isImageToken) {
+                    td.addEventListener('mouseenter', () => {
+                        if (lockedPatchIdx === null) highlightPatch(patchIdx);
+                    });
+                    td.addEventListener('mouseleave', () => {
+                        if (lockedPatchIdx === null) highlightPatch(null);
+                    });
+                }
+
+                tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+
+        wrapper.innerHTML = '';
+        wrapper.appendChild(table);
+
+        // Shading logic
+        const applyShading = (enabled) => {
+            const cells = table.querySelectorAll('td[data-prob]');
+            cells.forEach(td => {
+                if (enabled) {
+                    const prob = parseFloat(td.dataset.prob);
+                    const alpha = Math.min(prob, 1.0);
+                    const r = Math.round(255 - alpha * 200);
+                    const g = Math.round(255 - alpha * 50);
+                    const b = Math.round(255 - alpha * 200);
+                    td.style.backgroundColor = `rgb(${r},${g},${b})`;
+                    td.style.color = alpha > 0.6 ? '#fff' : '';
+                } else {
+                    td.style.backgroundColor = '';
+                    td.style.color = '';
+                }
+            });
+        };
+
+        const toggle = document.getElementById('logitLensShadingToggle');
+        applyShading(toggle.checked);
+        toggle.addEventListener('change', () => applyShading(toggle.checked));
+    }
+
     setupDlaAnalysis(resultsContent, topTokens) {
         const dlaTokenSelector = resultsContent.querySelector('#dlaTokenSelector');
         const dlaComponentSelector = resultsContent.querySelector('#dlaComponentSelector');

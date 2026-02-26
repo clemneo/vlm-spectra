@@ -34,7 +34,7 @@ class ModelManager:
                 "model_name": "Qwen/Qwen3-VL-8B-Instruct",
             },
         }
-        self.current_model_id = "ui-tars"
+        self.current_model_id = "qwen3-vl"
         self.pending_model_id = None
 
     def get_model_options(self) -> Dict[str, Any]:
@@ -368,7 +368,7 @@ class ModelManager:
             
             # Run forward pass with cache to get attention heads and MLP outputs
             start_time = time.time()
-            with self.model.run_with_cache(["lm.blocks.*.attn.hook_out", "lm.blocks.*.mlp.hook_out"]):
+            with self.model.run_with_cache(["lm.blocks.*.attn.hook_head_out", "lm.blocks.*.mlp.hook_out"]):
                 outputs = self.model.forward(inputs)
             inference_time = time.time() - start_time
             
@@ -400,8 +400,8 @@ class ModelManager:
             mlp_outputs = {}
             
             for layer_idx in range(self.model.adapter.lm_num_layers):
-                # Attention heads: shape (batch_size, seq_len, num_heads, head_dim)
-                attn_key = f"lm.blocks.{layer_idx}.attn.hook_out"
+                # Per-head contributions: shape (batch_size, seq_len, num_heads, hidden_dim)
+                attn_key = f"lm.blocks.{layer_idx}.attn.hook_head_out"
                 if attn_key in self.model.cache:
                     attention_heads[layer_idx] = self.model.cache[attn_key][0]  # Remove batch dimension
 
@@ -820,6 +820,128 @@ class ModelManager:
                 }
             }
             
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def logit_lens_analysis(
+        self,
+        image_path: str,
+        task: str,
+        assistant_prefill: str = ""
+    ) -> Dict[str, Any]:
+        """Run logit lens analysis: top-k token predictions at every layer and position."""
+        if not self.is_ready:
+            raise RuntimeError("Model not ready")
+
+        try:
+            from PIL import Image
+            from vlm_spectra.analysis.logit_lens import compute_logit_lens
+            from vlm_spectra.preprocessing.utils.vision_info import (
+                resolve_patch_params,
+                smart_resize,
+                MIN_PIXELS,
+                MAX_PIXELS,
+            )
+
+            image = Image.open(image_path)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            inputs = self.model.prepare_messages(task, image, assistant_prefill=assistant_prefill)
+
+            for key, value in inputs.items():
+                if torch.is_tensor(value):
+                    inputs[key] = value.to(self.model.device)
+                elif isinstance(value, dict):
+                    for subkey, subvalue in value.items():
+                        if torch.is_tensor(subvalue):
+                            value[subkey] = subvalue.to(self.model.device)
+
+            # Forward pass caching all layer residual streams
+            start_time = time.time()
+            with self.model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
+                self.model.forward(inputs)
+            inference_time = time.time() - start_time
+
+            # Stack hidden states into tuple for compute_logit_lens
+            num_layers = self.model.adapter.lm_num_layers
+            hidden_states = []
+            for layer_idx in range(num_layers):
+                cache_key = f"lm.blocks.{layer_idx}.hook_resid_post"
+                if cache_key in self.model.cache:
+                    hidden_states.append(self.model.cache[cache_key])
+            hidden_states = tuple(hidden_states)
+
+            # Build token labels
+            tokenizer = self.model.processor.tokenizer
+            input_ids = inputs['input_ids'][0].long().cpu().numpy()
+
+            try:
+                image_start_idx, image_end_idx = self.model.get_image_token_range(inputs)
+            except ValueError:
+                image_start_idx, image_end_idx = -1, -1
+
+            token_labels = []
+            img_counter = 0
+            for idx, tid in enumerate(input_ids):
+                if image_start_idx <= idx <= image_end_idx:
+                    token_labels.append(f"<IMG{img_counter:03d}>")
+                    img_counter += 1
+                else:
+                    token_labels.append(tokenizer.decode([tid]))
+
+            # Compute logit lens
+            norm_layer = self.model.adapter.lm_norm
+            lm_head = self.model.adapter.lm_head
+            top_k = 5
+            all_top_tokens = compute_logit_lens(
+                hidden_states, norm_layer, lm_head, tokenizer, top_k=top_k
+            )
+
+            # Compute vision grid info for image patch highlighting
+            width, height = image.size
+            vision_config = self.model.model.config.vision_config
+            model_name = getattr(self.model, "model_name", None)
+            patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
+            resize_factor = patch_size * spatial_merge_size
+            resized_height, resized_width = smart_resize(
+                height, width, factor=resize_factor,
+                min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS,
+            )
+            grid_h = resized_height // patch_size
+            grid_w = resized_width // patch_size
+            merged_grid_h = grid_h // spatial_merge_size
+            merged_grid_w = grid_w // spatial_merge_size
+            effective_patch_size = patch_size * spatial_merge_size
+
+            filename = os.path.basename(image_path)
+
+            return {
+                'success': True,
+                'all_top_tokens': all_top_tokens,
+                'token_labels': token_labels,
+                'num_layers': len(all_top_tokens),
+                'num_positions': len(token_labels),
+                'image_url': f'/static/uploads/{filename}',
+                'image_token_range': {
+                    'start': image_start_idx,
+                    'end': image_end_idx,
+                },
+                'grid_info': {
+                    'merged_grid_h': merged_grid_h,
+                    'merged_grid_w': merged_grid_w,
+                    'effective_patch_size': effective_patch_size,
+                    'original_width': width,
+                    'original_height': height,
+                    'resized_width': resized_width,
+                    'resized_height': resized_height,
+                },
+                'inference_time': round(inference_time, 2),
+            }
+
         except Exception as e:
             return {
                 'success': False,

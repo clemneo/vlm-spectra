@@ -353,3 +353,9 @@ body {
     font-family: 'Courier New', monospace;
     font-size: 0.85rem;
 }
+
+/* Dataset bar */
+.dataset-card {
+    background-color: #e8f0fe;
+    border-left: 4px solid #1a73e8;
+}

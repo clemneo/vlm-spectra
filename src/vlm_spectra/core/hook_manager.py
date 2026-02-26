@@ -143,7 +143,9 @@ class HookManager:
                     )
                 module = getter_fn(layer)
 
-                if is_pre:
+                if hook_type == "attn.hook_mask":
+                    wrapped_fn = self._wrap_mask_patch_hook(hook_fn)
+                elif is_pre:
                     wrapped_fn = self._wrap_pre_patch_hook(hook_fn)
                 else:
                     wrapped_fn = self._wrap_patch_hook(hook_fn)
@@ -389,5 +391,62 @@ class HookManager:
                 else:
                     new_arg = result
                 return (new_arg,) + args[1:], kwargs
+
+        return wrapper
+
+    def _wrap_mask_patch_hook(
+        self,
+        hook_fn: Callable[[nn.Module, tuple, dict, torch.Tensor], Optional[torch.Tensor]],
+    ):
+        """Wrap a mask patch hook for pre-hook registration on self_attn.
+
+        Extracts ``kwargs["attention_mask"]``, passes it to *hook_fn* with the
+        unified ``(module, args, kwargs, mask)`` signature, and writes the
+        (possibly modified) mask back into *kwargs*.
+        """
+        def wrapper(module: nn.Module, args: tuple, kwargs: dict):
+            mask = kwargs.get("attention_mask")
+            if mask is None:
+                # SDPA optimization: when standard causal masking suffices,
+                # transformers passes attention_mask=None and relies on
+                # SDPA's is_causal=True flag instead of an explicit mask.
+                # To let hook functions (e.g. BlockAttention) modify specific
+                # attention entries, we build the equivalent causal mask here.
+                # SDPA still accepts an explicit mask — it just can't use the
+                # Flash Attention kernel, falling back to the memory-efficient
+                # or math backend instead.
+                hidden_states = kwargs.get("hidden_states")
+                if hidden_states is None:
+                    return None
+                bsz, q_len = hidden_states.shape[:2]
+                cache_position = kwargs.get("cache_position")
+                if cache_position is not None and cache_position.max().item() + 1 > q_len:
+                    raise NotImplementedError(
+                        "Mask hook does not support cached decoding. "
+                        "Use model.forward() instead of model.generate() "
+                        "when using attention mask hooks."
+                    )
+                seq_len = q_len
+                mask = torch.zeros(
+                    (bsz, 1, seq_len, seq_len),
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                )
+                mask.masked_fill_(
+                    torch.triu(
+                        torch.ones(seq_len, seq_len, device=hidden_states.device, dtype=torch.bool),
+                        diagonal=1,
+                    ),
+                    float("-inf"),
+                )
+
+            result = hook_fn(module, args, kwargs, mask)
+
+            if result is None:
+                return None
+
+            new_kwargs = dict(kwargs)
+            new_kwargs["attention_mask"] = result
+            return args, new_kwargs
 
         return wrapper
