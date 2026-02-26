@@ -53,6 +53,15 @@ WORD_TO_NUMBER = {
 # Build reverse mapping for parsing generated text (longest match first)
 NUMBER_WORDS_BY_LENGTH = sorted(WORD_TO_NUMBER.keys(), key=len, reverse=True)
 
+# Activation patching pair: children, source (count=2) vs target (count=7)
+PATCHING_PAIR = {
+    "obj": "children",
+    "source_idx": 438,
+    "source_count": 2,
+    "target_idx": 463,
+    "target_count": 7,
+}
+
 
 def token_to_number(token_str: str) -> int | None:
     """Map a decoded token string to an integer value, or None."""
@@ -539,6 +548,267 @@ def create_aggregate_heatmap(
 
 
 # ---------------------------------------------------------------------------
+# Activation patching
+# ---------------------------------------------------------------------------
+
+
+def compute_activation_patching(
+    model, ds, pair, resize_dim, tokenizer,
+) -> dict:
+    """Run activation patching experiment between a source-target image pair.
+
+    Patches source activations into the target forward pass at each layer,
+    separately for image-only and text-only token positions. Measures
+    normalized logit difference and whether the argmax prediction flips
+    to the source count.
+
+    Normalization: (patched_ld - clean_ld) / (source_ld - clean_ld)
+    where ld = logit(source_count) - logit(target_count).
+    0 = no effect (patched ≈ clean target), 1 = full recovery (patched ≈ source).
+    """
+    from PIL import Image as PILImage
+
+    source_idx = pair["source_idx"]
+    target_idx = pair["target_idx"]
+    source_count = pair["source_count"]
+    target_count = pair["target_count"]
+    obj_name = pair["obj"]
+
+    # Get and resize images
+    source_image = ds[source_idx]["image"].resize(
+        (resize_dim, resize_dim), PILImage.LANCZOS
+    )
+    target_image = ds[target_idx]["image"].resize(
+        (resize_dim, resize_dim), PILImage.LANCZOS
+    )
+
+    # Build prompt (matching parse_countbench_item pattern)
+    prompt = f"How many {obj_name} are in this image? Answer with just the number."
+
+    # Prepare inputs
+    source_inputs = model.prepare_messages(prompt, source_image)
+    target_inputs = model.prepare_messages(prompt, target_image)
+
+    # Verify image token ranges match
+    source_start, source_end = model.get_image_token_range(source_inputs)
+    target_start, target_end = model.get_image_token_range(target_inputs)
+
+    source_n_img = source_end - source_start + 1
+    target_n_img = target_end - target_start + 1
+
+    print(f"  Source: idx={source_idx}, count={source_count}, "
+          f"image_tokens={source_n_img}, range=[{source_start}, {source_end}]")
+    print(f"  Target: idx={target_idx}, count={target_count}, "
+          f"image_tokens={target_n_img}, range=[{target_start}, {target_end}]")
+
+    assert source_n_img == target_n_img, (
+        f"Image token count mismatch: source={source_n_img}, target={target_n_img}"
+    )
+    assert source_start == target_start, (
+        f"Image token start mismatch: source={source_start}, target={target_start}"
+    )
+
+    start_idx = source_start
+    end_idx = source_end
+
+    # Get token IDs for the count numbers
+    source_tok_id = tokenizer.encode(str(source_count), add_special_tokens=False)[0]
+    target_tok_id = tokenizer.encode(str(target_count), add_special_tokens=False)[0]
+
+    print(f"  Source count token: '{tokenizer.decode([source_tok_id])}' (id={source_tok_id})")
+    print(f"  Target count token: '{tokenizer.decode([target_tok_id])}' (id={target_tok_id})")
+
+    num_layers = model.lm_num_layers
+
+    # --- Cache source activations ---
+    print("  Caching source activations...")
+    with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
+        source_output = model.forward(source_inputs)
+
+    source_cache = ActivationCache()
+    source_cache._data = model.cache
+    source_activations = source_cache.stack("lm.blocks.*.hook_resid_post")
+    # Shape: [num_layers, 1, seq, hidden]
+    source_activations = source_activations.detach().clone()
+
+    source_logits = source_output.logits[0, -1, :].detach().clone()
+    source_logit_diff = (
+        source_logits[source_tok_id] - source_logits[target_tok_id]
+    ).item()
+
+    model.cache = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # --- Cache target activations (clean run) ---
+    print("  Caching target activations (clean run)...")
+    with model.run_with_cache(["lm.blocks.*.hook_resid_post"]):
+        target_output = model.forward(target_inputs)
+
+    clean_logits = target_output.logits[0, -1, :].detach().clone()
+    clean_logit_diff = (
+        clean_logits[source_tok_id] - clean_logits[target_tok_id]
+    ).item()
+
+    # Normalization denominator: source_ld - clean_ld
+    denominator = source_logit_diff - clean_logit_diff
+
+    print(f"  Source logit diff (source_tok - target_tok): {source_logit_diff:.4f}")
+    print(f"  Clean target logit diff (source_tok - target_tok): {clean_logit_diff:.4f}")
+    print(f"  Normalization denominator: {denominator:.4f}")
+
+    model.cache = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    clean_pred_id = clean_logits.argmax().item()
+    source_pred_id = source_logits.argmax().item()
+    print(f"  Clean target prediction: '{tokenizer.decode([clean_pred_id])}'")
+    print(f"  Clean source prediction: '{tokenizer.decode([source_pred_id])}'")
+
+    # --- Patching loop ---
+    results_by_condition = {
+        "image_only": [], "text_only": [],
+        "image_last_16": [], "image_last_32": [],
+    }
+
+    for layer_idx in tqdm(range(num_layers), desc="  Patching layers"):
+        hook_name = f"lm.blocks.{layer_idx}.hook_resid_post"
+
+        for condition in ["image_only", "text_only", "image_last_16", "image_last_32"]:
+            source_acts_layer = source_activations[layer_idx]  # [1, seq, hidden]
+
+            if condition == "image_only":
+                def patch_fn(
+                    module, args, kwargs, output,
+                    _s=source_acts_layer, _si=start_idx, _ei=end_idx,
+                ):
+                    output[0, _si:_ei + 1, :] = _s[0, _si:_ei + 1, :]
+                    return output
+            elif condition == "text_only":
+                def patch_fn(
+                    module, args, kwargs, output,
+                    _s=source_acts_layer, _si=start_idx, _ei=end_idx,
+                ):
+                    output[0, :_si, :] = _s[0, :_si, :]
+                    output[0, _ei + 1:, :] = _s[0, _ei + 1:, :]
+                    return output
+            elif condition == "image_last_16":
+                def patch_fn(
+                    module, args, kwargs, output,
+                    _s=source_acts_layer, _ei=end_idx,
+                ):
+                    output[0, _ei - 15:_ei + 1, :] = _s[0, _ei - 15:_ei + 1, :]
+                    return output
+            else:  # image_last_32
+                def patch_fn(
+                    module, args, kwargs, output,
+                    _s=source_acts_layer, _ei=end_idx,
+                ):
+                    output[0, _ei - 31:_ei + 1, :] = _s[0, _ei - 31:_ei + 1, :]
+                    return output
+
+            with model.run_with_hooks([(hook_name, patch_fn)]):
+                patched_output = model.forward(target_inputs)
+
+            patched_logits = patched_output.logits[0, -1, :]
+            logit_diff = (
+                patched_logits[source_tok_id] - patched_logits[target_tok_id]
+            ).item()
+
+            if abs(denominator) > 1e-6:
+                normalized_diff = (logit_diff - clean_logit_diff) / denominator
+            else:
+                normalized_diff = 0.0
+
+            pred_id = patched_logits.argmax().item()
+            pred_flipped = pred_id == source_tok_id
+
+            results_by_condition[condition].append({
+                "layer": layer_idx,
+                "logit_diff": round(logit_diff, 4),
+                "normalized_diff": round(normalized_diff, 4),
+                "pred_token_id": pred_id,
+                "pred_token": tokenizer.decode([pred_id]),
+                "pred_flipped_to_source": pred_flipped,
+            })
+
+        # Clean up between layers
+        model.cache = None
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Free source activations
+    del source_activations
+
+    return {
+        "pair": pair,
+        "resize_dim": resize_dim,
+        "num_layers": num_layers,
+        "start_idx": start_idx,
+        "end_idx": end_idx,
+        "num_image_tokens": end_idx - start_idx + 1,
+        "source_tok_id": source_tok_id,
+        "target_tok_id": target_tok_id,
+        "source_logit_diff": round(source_logit_diff, 4),
+        "clean_logit_diff": round(clean_logit_diff, 4),
+        "normalization_denominator": round(denominator, 4),
+        "clean_pred_token": tokenizer.decode([clean_pred_id]),
+        "source_pred_token": tokenizer.decode([source_pred_id]),
+        "image_only": results_by_condition["image_only"],
+        "text_only": results_by_condition["text_only"],
+        "image_last_16": results_by_condition["image_last_16"],
+        "image_last_32": results_by_condition["image_last_32"],
+    }
+
+
+def create_patching_plot(result: dict, output_path: Path) -> None:
+    """Create a line plot of activation patching results.
+
+    X-axis: layer index. Y-axis: normalized logit difference.
+    Two lines: image-only (blue) and text-only (orange).
+    Horizontal dashed lines at 0 (no effect) and 1 (full recovery).
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    layers = [r["layer"] for r in result["image_only"]]
+    image_diffs = [r["normalized_diff"] for r in result["image_only"]]
+    text_diffs = [r["normalized_diff"] for r in result["text_only"]]
+    image_last16_diffs = [r["normalized_diff"] for r in result["image_last_16"]]
+    image_last32_diffs = [r["normalized_diff"] for r in result["image_last_32"]]
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(layers, image_diffs, color="blue", label="Image-only patching", linewidth=1.5)
+    ax.plot(layers, text_diffs, color="orange", label="Text-only patching", linewidth=1.5)
+    ax.plot(layers, image_last16_diffs, color="green", linestyle="--", label="Image last-16 patching", linewidth=1.5)
+    ax.plot(layers, image_last32_diffs, color="red", linestyle="--", label="Image last-32 patching", linewidth=1.5)
+    ax.axhline(y=0, color="gray", linestyle="--", alpha=0.5, label="No effect")
+    ax.axhline(y=1, color="gray", linestyle=":", alpha=0.5, label="Full recovery")
+
+    pair = result["pair"]
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Normalized logit difference")
+    ax.set_title(
+        f"Activation Patching: {pair['obj']} "
+        f"(count {pair['source_count']} → {pair['target_count']})"
+    )
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"  Patching plot saved to {output_path}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -599,6 +869,17 @@ def main():
         type=float,
         default=0.05,
         help="Min probability for filtered histogram (default: 0.05)",
+    )
+    parser.add_argument(
+        "--activation-patching",
+        action="store_true",
+        help="Run activation patching experiment on the children pair",
+    )
+    parser.add_argument(
+        "--patch-resize",
+        type=int,
+        default=448,
+        help="Resize dimension for activation patching images (default: 448)",
     )
     args = parser.parse_args()
 
@@ -847,6 +1128,60 @@ def main():
             with open(errors_path, "w") as f:
                 json.dump(errors, f, indent=2)
             print(f"\n{len(errors)} errors saved to {errors_path}")
+
+    # --- Activation patching experiment ---
+    if args.activation_patching:
+        print("\n" + "=" * 70)
+        print("ACTIVATION PATCHING EXPERIMENT")
+        print("=" * 70)
+
+        # Ensure model and dataset are available
+        if args.analyze_only:
+            from datasets import load_dataset
+
+            print(f"Loading dataset for activation patching: {args.dataset}")
+            ds = load_dataset(args.dataset, split="train")
+
+            print(f"Loading model for activation patching: {args.model}")
+            model = HookedVLM.from_pretrained(args.model)
+            components = model.get_model_components()
+            tokenizer = components["tokenizer"]
+
+        patching_result = compute_activation_patching(
+            model, ds, PATCHING_PAIR, args.patch_resize, tokenizer,
+        )
+
+        # Save JSON result
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        patching_path = output_dir / "activation_patching_children.json"
+        with open(patching_path, "w") as f:
+            json.dump(patching_result, f, indent=2)
+        print(f"\nActivation patching results saved to {patching_path}")
+
+        # Create plot
+        create_patching_plot(
+            patching_result, plots_dir / "activation_patching_children.png"
+        )
+
+        # Print summary
+        print(f"\n  Pair: {PATCHING_PAIR['obj']} "
+              f"(source count={PATCHING_PAIR['source_count']}, "
+              f"target count={PATCHING_PAIR['target_count']})")
+        print(f"  Resize: {args.patch_resize}x{args.patch_resize}")
+        print(f"  Image tokens: {patching_result['num_image_tokens']}")
+        print(f"  Source logit diff: {patching_result['source_logit_diff']}")
+        print(f"  Clean target logit diff: {patching_result['clean_logit_diff']}")
+
+        # Summarize where prediction flips occur
+        for cond in ["image_only", "text_only", "image_last_16", "image_last_32"]:
+            flip_layers = [
+                r["layer"] for r in patching_result[cond]
+                if r["pred_flipped_to_source"]
+            ]
+            print(f"  {cond}: prediction flips at {len(flip_layers)} layers"
+                  + (f" ({flip_layers})" if flip_layers else ""))
+
+        print("=" * 70)
 
     # Post-loop: aggregate ranks, print summary, create histograms
     if not results:
