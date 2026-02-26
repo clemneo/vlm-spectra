@@ -268,16 +268,23 @@ def run_condition_d(model: HookedVLM, inputs) -> tuple[float, float]:
     return forward_ms, total_ms
 
 
+N_PATCH_TOKENS = 10  # number of image tokens to patch per layer
+
+
 def build_patch_resid_hooks(
     model: HookedVLM, example_inputs,
 ) -> list[tuple[str, PatchActivation]]:
     """Capture resid_post from a single example and build patch hooks.
 
-    The returned hooks can be reused across many forward passes — the patched
-    values will be "wrong" for other inputs but the GPU work is identical,
-    which is all that matters for a timing benchmark.
+    Patches the last N_PATCH_TOKENS image tokens per layer.  Each hook targets
+    a single token_idx with a [hidden_dim] replacement, so the hooks are
+    independent of sequence length and can be reused across examples.
     """
     num_layers = model.lm_num_layers
+    img_start, img_end = model.get_image_token_range(example_inputs)
+    # last N image token positions (inclusive range, so +1)
+    token_indices = list(range(max(img_start, img_end - N_PATCH_TOKENS + 1), img_end + 1))
+
     cache_hooks = ["lm.blocks.*.hook_resid_post"]
     with model.run_with_cache(cache_hooks) as cache:
         model.forward(example_inputs)
@@ -285,9 +292,12 @@ def build_patch_resid_hooks(
     hooks = []
     for layer_idx in range(num_layers):
         hook_name = f"lm.blocks.{layer_idx}.hook_resid_post"
-        # cache[hook_name] is [batch, seq, hidden]; PatchActivation expects [seq, hidden]
-        replacement = cache[hook_name][0]
-        hooks.append((hook_name, PatchActivation(replacement=replacement)))
+        cached = cache[hook_name][0]  # [seq, hidden]
+        for tok_idx in token_indices:
+            replacement = cached[tok_idx]  # [hidden]
+            hooks.append((hook_name, PatchActivation(
+                replacement=replacement, token_idx=tok_idx,
+            )))
     return hooks
 
 
@@ -296,10 +306,14 @@ def build_patch_head_hooks(
 ) -> list[tuple[str, PatchHead]]:
     """Capture attn.hook_z from a single example and build head-patch hooks.
 
+    Patches head 0 at the last N_PATCH_TOKENS image tokens per layer.
     See build_patch_resid_hooks for rationale on reuse.
     """
     num_layers = model.lm_num_layers
     num_heads = model.adapter.lm_num_heads
+    img_start, img_end = model.get_image_token_range(example_inputs)
+    token_indices = list(range(max(img_start, img_end - N_PATCH_TOKENS + 1), img_end + 1))
+
     cache_hooks = ["lm.blocks.*.attn.hook_z"]
     with model.run_with_cache(cache_hooks) as cache:
         model.forward(example_inputs)
@@ -307,17 +321,18 @@ def build_patch_head_hooks(
     hooks = []
     for layer_idx in range(num_layers):
         hook_name = f"lm.blocks.{layer_idx}.attn.hook_z"
-        # format_cache_item reshapes to [batch, seq, num_heads, head_dim]
-        z = cache[hook_name]
-        head_0_vals = z[0, :, 0, :]  # [seq_len, head_dim]
-        hooks.append((
-            hook_name,
-            PatchHead(
-                head_idx=0,
-                replacement=head_0_vals,
-                num_heads=num_heads,
-            ),
-        ))
+        z = cache[hook_name]  # [batch, seq, num_heads, head_dim]
+        for tok_idx in token_indices:
+            head_0_val = z[0, tok_idx, 0, :]  # [head_dim]
+            hooks.append((
+                hook_name,
+                PatchHead(
+                    head_idx=0,
+                    replacement=head_0_val,
+                    num_heads=num_heads,
+                    token_idx=tok_idx,
+                ),
+            ))
     return hooks
 
 
@@ -723,23 +738,25 @@ def run_all_conditions(
     # Values are "wrong" for other inputs but GPU work is identical.
     setup_inputs = prepare_inputs(model, examples[0])
 
-    print(f"\n--- Condition E: Activation patching hook_resid_post ({num_layers} hooks) ---")
+    n_e = num_layers * N_PATCH_TOKENS
+    print(f"\n--- Condition E: Activation patching hook_resid_post ({n_e} hooks, last {N_PATCH_TOKENS} img tokens) ---")
     print("  Building patch hooks from first example...")
     resid_hooks = build_patch_resid_hooks(model, setup_inputs)
     cleanup()
     results["E"] = run_benchmark_condition(
-        "E", f"Patch resid_post ({num_layers} hooks, SDPA)",
+        "E", f"Patch resid_post ({n_e} hooks, last {N_PATCH_TOKENS} img tokens, SDPA)",
         _make_run_condition_e(resid_hooks),
         model, examples, warmup, returns_total=True,
     )
     cleanup()
 
-    print(f"\n--- Condition F: Head patching attn.hook_z head 0 ({num_layers} hooks) ---")
+    n_f = num_layers * N_PATCH_TOKENS
+    print(f"\n--- Condition F: Head patching attn.hook_z head 0 ({n_f} hooks, last {N_PATCH_TOKENS} img tokens) ---")
     print("  Building patch hooks from first example...")
     head_hooks = build_patch_head_hooks(model, setup_inputs)
     cleanup()
     results["F"] = run_benchmark_condition(
-        "F", f"Patch head 0 hook_z ({num_layers} hooks, SDPA)",
+        "F", f"Patch head 0 hook_z ({n_f} hooks, last {N_PATCH_TOKENS} img tokens, SDPA)",
         _make_run_condition_f(head_hooks),
         model, examples, warmup, returns_total=True,
     )
