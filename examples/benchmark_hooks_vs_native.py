@@ -3,12 +3,14 @@
 Measures the timing overhead of the hook-based approach vs HuggingFace native
 `output_hidden_states` and `output_attentions` on real CountBench data.
 
-Five benchmark conditions:
+Seven benchmark conditions:
   Baseline  - Plain forward, no extras (SDPA/Flash)
   A         - output_hidden_states=True (SDPA/Flash)
   B         - Hooks: hook_resid_pre + hook_resid_post, 64 hooks (SDPA/Flash)
   C         - output_attentions=True (switches to Eager)
   D         - Hooks: attn.hook_pattern, 32 virtual hooks (SDPA/Flash)
+  E         - Activation patching via run_with_hooks on all layers' hook_resid_post
+  F         - Head patching via run_with_hooks on all layers' attn.hook_z (head 0)
 
 Usage:
     uv run python examples/benchmark_hooks_vs_native.py --num-images 5 --warmup 1
@@ -31,7 +33,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from vlm_spectra import HookedVLM
+from vlm_spectra import HookedVLM, PatchActivation, PatchHead
 
 # ---------------------------------------------------------------------------
 # Number-word utilities (for CountBench filtering)
@@ -264,6 +266,97 @@ def run_condition_d(model: HookedVLM, inputs) -> tuple[float, float]:
     return forward_ms, total_ms
 
 
+def run_condition_e(model: HookedVLM, inputs) -> tuple[float, float]:
+    """Activation patching via run_with_hooks on all layers' hook_resid_post.
+
+    Pre-captures activations (untimed), then times one run_with_hooks forward pass
+    that replaces every layer's residual stream with the cached values.
+    Returns (forward_ms, total_ms).
+    """
+    num_layers = model.lm_num_layers
+
+    # Untimed setup: capture activations to use as replacements
+    cache_hooks = ["lm.blocks.*.hook_resid_post"]
+    with model.run_with_cache(cache_hooks) as cache:
+        model.forward(inputs)
+
+    # Build per-layer patch hooks
+    hooks = []
+    for layer_idx in range(num_layers):
+        hook_name = f"lm.blocks.{layer_idx}.hook_resid_post"
+        # cache[hook_name] is [batch, seq, hidden]; PatchActivation expects [seq, hidden]
+        replacement = cache[hook_name][0]
+        hooks.append((hook_name, PatchActivation(replacement=replacement)))
+
+    # Timed: run_with_hooks context + forward
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+
+    with model.run_with_hooks(hooks):
+        torch.cuda.synchronize()
+        t_pre = time.perf_counter()
+        model.forward(inputs)
+        torch.cuda.synchronize()
+        t1 = time.perf_counter()
+
+    torch.cuda.synchronize()
+    t2 = time.perf_counter()
+
+    forward_ms = (t1 - t_pre) * 1000
+    total_ms = (t2 - t0) * 1000
+    return forward_ms, total_ms
+
+
+def run_condition_f(model: HookedVLM, inputs) -> tuple[float, float]:
+    """Head patching via run_with_hooks on all layers' attn.hook_z (head 0).
+
+    Pre-captures attn.hook_z activations (untimed), extracts head 0,
+    then times one run_with_hooks forward pass that patches head 0 at every layer.
+    Returns (forward_ms, total_ms).
+    """
+    num_layers = model.lm_num_layers
+    num_heads = model.adapter.lm_num_heads
+
+    # Untimed setup: capture hook_z activations
+    cache_hooks = ["lm.blocks.*.attn.hook_z"]
+    with model.run_with_cache(cache_hooks) as cache:
+        model.forward(inputs)
+
+    # Build per-layer head-patch hooks (head 0)
+    hooks = []
+    for layer_idx in range(num_layers):
+        hook_name = f"lm.blocks.{layer_idx}.attn.hook_z"
+        # format_cache_item reshapes to [batch, seq, num_heads, head_dim]
+        z = cache[hook_name]
+        head_0_vals = z[0, :, 0, :]  # [seq_len, head_dim]
+        hooks.append((
+            hook_name,
+            PatchHead(
+                head_idx=0,
+                replacement=head_0_vals,
+                num_heads=num_heads,
+            ),
+        ))
+
+    # Timed: run_with_hooks context + forward
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+
+    with model.run_with_hooks(hooks):
+        torch.cuda.synchronize()
+        t_pre = time.perf_counter()
+        model.forward(inputs)
+        torch.cuda.synchronize()
+        t1 = time.perf_counter()
+
+    torch.cuda.synchronize()
+    t2 = time.perf_counter()
+
+    forward_ms = (t1 - t_pre) * 1000
+    total_ms = (t2 - t0) * 1000
+    return forward_ms, total_ms
+
+
 # ---------------------------------------------------------------------------
 # Benchmark loop
 # ---------------------------------------------------------------------------
@@ -390,6 +483,24 @@ def print_summary_table(results: dict[str, TimingResult]):
         if c_fwd > 0:
             print(f"  D total overhead vs C:        {d_tot - c_fwd:>+7.1f} ms  ({(d_tot / c_fwd - 1) * 100:>+.1f}%)")
 
+    if "E" in results:
+        e_fwd = results["E"].forward_stats["mean"]
+        e_tot = results["E"].total_stats["mean"]
+        print(f"\nActivation Patching (run_with_hooks):")
+        print(f"  E (patch resid) forward:      {e_fwd:>7.1f} ms  ({e_fwd - baseline_fwd:>+7.1f} ms vs baseline)")
+        print(f"  E (patch resid) total:        {e_tot:>7.1f} ms  ({e_tot - baseline_fwd:>+7.1f} ms vs baseline)")
+        if "B" in results:
+            b_tot = results["B"].total_stats["mean"]
+            if b_tot > 0:
+                print(f"  B (cache) vs E (patch):       {e_tot - b_tot:>+7.1f} ms  ({(e_tot / b_tot - 1) * 100:>+.1f}%)")
+
+    if "F" in results:
+        f_fwd = results["F"].forward_stats["mean"]
+        f_tot = results["F"].total_stats["mean"]
+        print(f"\nHead Patching (run_with_hooks):")
+        print(f"  F (patch head 0) forward:     {f_fwd:>7.1f} ms  ({f_fwd - baseline_fwd:>+7.1f} ms vs baseline)")
+        print(f"  F (patch head 0) total:       {f_tot:>7.1f} ms  ({f_tot - baseline_fwd:>+7.1f} ms vs baseline)")
+
     if "A" in results and "C" in results:
         a_fwd = results["A"].forward_stats["mean"]
         c_fwd = results["C"].forward_stats["mean"]
@@ -428,6 +539,20 @@ def save_results_json(results: dict[str, TimingResult], output_dir: Path):
             "D_vs_C_overhead_ms": results["D"].total_stats["mean"] - results["C"].forward_stats["mean"],
         }
 
+    if "E" in results:
+        summary["activation_patching"] = {
+            "E_forward_ms": results["E"].forward_stats["mean"],
+            "E_total_ms": results["E"].total_stats["mean"],
+            "E_vs_baseline_overhead_ms": results["E"].total_stats["mean"] - baseline_fwd,
+        }
+
+    if "F" in results:
+        summary["head_patching"] = {
+            "F_forward_ms": results["F"].forward_stats["mean"],
+            "F_total_ms": results["F"].total_stats["mean"],
+            "F_vs_baseline_overhead_ms": results["F"].total_stats["mean"] - baseline_fwd,
+        }
+
     data["summary"] = summary
 
     with open(output_path, "w") as f:
@@ -447,7 +572,9 @@ def create_comparison_plots(results: dict[str, TimingResult], output_dir: Path):
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    has_ef = "E" in results or "F" in results
+    ncols = 3 if has_ef else 2
+    fig, axes = plt.subplots(1, ncols, figsize=(7 * ncols, 6))
 
     # Hidden states comparison: Baseline, A, B
     ax = axes[0]
@@ -487,6 +614,26 @@ def create_comparison_plots(results: dict[str, TimingResult], output_dir: Path):
         ax.set_title("Attention Patterns: HF Eager vs Hooks (SDPA)")
         ax.grid(True, alpha=0.3)
 
+    # Activation patching comparison: Baseline, E, F
+    if has_ef:
+        ax = axes[2]
+        patch_data = []
+        patch_labels = []
+        for name in ["Baseline", "E", "F"]:
+            if name in results:
+                vals = results[name].total_ms if name in ("E", "F") else results[name].forward_ms
+                patch_data.append(vals)
+                label = f"{name}\n({results[name].description[:25]})"
+                patch_labels.append(label)
+        if patch_data:
+            bp = ax.boxplot(patch_data, labels=patch_labels, patch_artist=True)
+            colors = ["#a8d8ea", "#f6c89f", "#c3e6cb"]
+            for patch, color in zip(bp["boxes"], colors[:len(bp["boxes"])]):
+                patch.set_facecolor(color)
+            ax.set_ylabel("Time (ms)")
+            ax.set_title("Activation Patching: run_with_hooks")
+            ax.grid(True, alpha=0.3)
+
     plt.tight_layout()
     plot_path = output_dir / "benchmark_comparison.png"
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
@@ -515,7 +662,7 @@ class TeeStream:
 
 
 # ---------------------------------------------------------------------------
-# Run all five conditions on a given slice of examples
+# Run all seven conditions on a given slice of examples
 # ---------------------------------------------------------------------------
 
 def run_all_conditions(
@@ -525,7 +672,7 @@ def run_all_conditions(
     output_dir: Path,
     n_label: int,
 ) -> dict[str, TimingResult]:
-    """Run the five benchmark conditions and save results for *n_label* images."""
+    """Run the seven benchmark conditions and save results for *n_label* images."""
     num_layers = model.lm_num_layers
     results: dict[str, TimingResult] = {}
 
@@ -560,6 +707,20 @@ def run_all_conditions(
     print(f"\n--- Condition D: Hooks attn.hook_pattern ({num_layers} virtual hooks) ---")
     results["D"] = run_benchmark_condition(
         "D", f"Hooks: attn.hook_pattern ({num_layers} virtual, SDPA)", run_condition_d,
+        model, examples, warmup, returns_total=True,
+    )
+    cleanup()
+
+    print(f"\n--- Condition E: Activation patching hook_resid_post ({num_layers} hooks) ---")
+    results["E"] = run_benchmark_condition(
+        "E", f"Patch resid_post ({num_layers} hooks, SDPA)", run_condition_e,
+        model, examples, warmup, returns_total=True,
+    )
+    cleanup()
+
+    print(f"\n--- Condition F: Head patching attn.hook_z head 0 ({num_layers} hooks) ---")
+    results["F"] = run_benchmark_condition(
+        "F", f"Patch head 0 hook_z ({num_layers} hooks, SDPA)", run_condition_f,
         model, examples, warmup, returns_total=True,
     )
     cleanup()
