@@ -298,12 +298,8 @@ class HookedVLM:
         return start_index, end_index
 
     def generate_patch_overview(self, image: Image.Image, **kwargs) -> Image.Image:
-        from vlm_spectra.visualization.patch_overview import (
-            generate_patch_overview as _generate_patch_overview,
-        )
-
         info = self.process_image(image)
-        return _generate_patch_overview(info, **kwargs)
+        return info.patch_overview(**kwargs)
 
     def prepare_messages_batch(
         self,

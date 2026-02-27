@@ -210,3 +210,26 @@ class ImageInfo:
         return PatchOverlap(
             patch_indices=patch_indices, overlap_fractions=overlap_fractions
         )
+
+    def patch_overview(
+        self,
+        labels: str = "every_10",
+        start_number: int = 0,
+        highlight: list[int] | None = None,
+        highlight_color: tuple[int, int, int, int] = (255, 200, 0, 100),
+    ) -> Image.Image:
+        """Draw a patch grid overlay on the processed image.
+
+        Delegates to :func:`vlm_spectra.visualization.patch_overview.generate_patch_overview`.
+        """
+        from vlm_spectra.visualization.patch_overview import (
+            generate_patch_overview,
+        )
+
+        return generate_patch_overview(
+            self,
+            labels=labels,
+            start_number=start_number,
+            highlight=highlight,
+            highlight_color=highlight_color,
+        )
