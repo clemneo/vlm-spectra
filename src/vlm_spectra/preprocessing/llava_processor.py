@@ -22,6 +22,8 @@ class LlavaProcessor(BaseProcessor):
         self.processor = hf_processor
         self.default_prompt = default_prompt
         self.image_factor = None
+        self.patch_size = 14
+        self.spatial_merge_size = 1
 
     def prepare_inputs(
         self,

@@ -1376,7 +1376,7 @@ class DemoApp {
     }
 
     renderLogitLensTable(result) {
-        const { all_top_tokens, token_labels, num_layers, image_token_range, grid_info, image_url } = result;
+        const { all_top_tokens, token_labels, num_layers, image_token_range, grid_info, image_url, processed_image_url } = result;
         const numPositions = token_labels.length;
 
         // Set up image for patch highlighting
@@ -1385,7 +1385,7 @@ class DemoApp {
         const imgContainer = document.getElementById('logitLensImageContainer');
 
         if (image_url && image_token_range.start >= 0) {
-            img.src = image_url;
+            img.src = processed_image_url || image_url;
             imgContainer.style.display = '';
         } else {
             imgContainer.style.display = 'none';
@@ -1461,20 +1461,17 @@ class DemoApp {
             if (patchIdx === null || patchIdx === undefined) return;
 
             const gw = grid_info.merged_grid_w;
-            const gh = grid_info.merged_grid_h;
             const row = Math.floor(patchIdx / gw);
             const col = patchIdx % gw;
             const epatch = grid_info.effective_patch_size;
 
-            const scaleX = rect.width / grid_info.original_width;
-            const scaleY = rect.height / grid_info.original_height;
-            const imgScaleX = grid_info.original_width / grid_info.resized_width;
-            const imgScaleY = grid_info.original_height / grid_info.resized_height;
-
-            const x = col * epatch * imgScaleX * scaleX;
-            const y = row * epatch * imgScaleY * scaleY;
-            const w = epatch * imgScaleX * scaleX;
-            const h = epatch * imgScaleY * scaleY;
+            // Use processed image dimensions directly (1:1 mapping)
+            const scaleX = rect.width / grid_info.processed_width;
+            const scaleY = rect.height / grid_info.processed_height;
+            const x = col * epatch * scaleX;
+            const y = row * epatch * scaleY;
+            const w = epatch * scaleX;
+            const h = epatch * scaleY;
 
             // Dim everything
             ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -2302,10 +2299,10 @@ class DemoApp {
                 // Cache ALL heads data for instant switching
                 this.allHeadsAttentionData = result.attention_data.all_heads;
                 this.currentLayer = parseInt(layer);
-                this.currentImageUrl = result.image_url;
-                
+                this.currentImageUrl = result.processed_image_url || result.image_url;
+
                 // Update all visualizations
-                this.updateAttentionImage(result.image_url, result.attention_data);
+                this.updateAttentionImage(this.currentImageUrl, result.attention_data);
                 this.updateAttentionText(result.attention_data.text_tokens);
                 this.updateAttentionHeatmap(result.attention_data);
                 

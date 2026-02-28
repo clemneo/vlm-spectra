@@ -33,6 +33,26 @@ class ModelManager:
                 "label": "Qwen3-VL 8B Instruct",
                 "model_name": "Qwen/Qwen3-VL-8B-Instruct",
             },
+            "qwen25-vl-3b": {
+                "label": "Qwen2.5-VL 3B Instruct",
+                "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
+            },
+            "qwen25-vl-7b": {
+                "label": "Qwen2.5-VL 7B Instruct",
+                "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+            },
+            "qwen25-vl-72b": {
+                "label": "Qwen2.5-VL 72B Instruct",
+                "model_name": "Qwen/Qwen2.5-VL-72B-Instruct",
+            },
+            "llava15-7b": {
+                "label": "LLaVA 1.5 7B",
+                "model_name": "llava-hf/llava-1.5-7b-hf",
+            },
+            "llava15-13b": {
+                "label": "LLaVA 1.5 13B",
+                "model_name": "llava-hf/llava-1.5-13b-hf",
+            },
         }
         self.current_model_id = "qwen3-vl"
         self.pending_model_id = None
@@ -80,11 +100,17 @@ class ModelManager:
                 'model_id': self.current_model_id
             }
 
-        from vlm_spectra.preprocessing.utils.vision_info import resolve_patch_params
-
-        vision_config = self.model.model.config.vision_config
-        model_name = self.model_options[self.current_model_id]["model_name"]
-        patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
+        processor = self.model._processor
+        patch_size = getattr(processor, 'patch_size', None)
+        spatial_merge_size = getattr(processor, 'spatial_merge_size', None)
+        if patch_size is None or spatial_merge_size is None:
+            return {
+                'error': 'Patch info not available for this model',
+                'patch_size': 14,
+                'spatial_merge_size': 2,
+                'effective_patch_size': 28,
+                'model_id': self.current_model_id
+            }
         effective_patch_size = patch_size * spatial_merge_size
 
         return {
@@ -600,41 +626,18 @@ class ModelManager:
                     'error': 'No image tokens found in the input sequence'
                 }
             
-            # Calculate image patch information using existing model logic
-            # Get vision config for patch information
-            vision_config = self.model.model.config.vision_config
-            model_name = getattr(self.model, "model_name", None)
-            from vlm_spectra.preprocessing.utils.vision_info import (
-                resolve_patch_params,
-            )
-            patch_size, spatial_merge_size = resolve_patch_params(
-                vision_config, model_name
-            )
-            
-            # Calculate resized dimensions using the model's logic
-            width, height = image.size
-            from vlm_spectra.preprocessing.utils.vision_info import (
-                smart_resize,
-                MIN_PIXELS,
-                MAX_PIXELS,
-            )
-            resize_factor = patch_size * spatial_merge_size
-            resized_height, resized_width = smart_resize(
-                height,
-                width,
-                factor=resize_factor,
-                min_pixels=MIN_PIXELS,
-                max_pixels=MAX_PIXELS,
-            )
-            
-            # Calculate grid dimensions
-            grid_h = resized_height // patch_size
-            grid_w = resized_width // patch_size
-            
-            # After spatial merge
-            merged_grid_h = grid_h // spatial_merge_size
-            merged_grid_w = grid_w // spatial_merge_size
-            effective_patch_size = patch_size * spatial_merge_size
+            # Calculate image patch information using process_image
+            image_info = self.model.process_image(image)
+            merged_grid_h = image_info.grid_h
+            merged_grid_w = image_info.grid_w
+            effective_patch_size = image_info.effective_patch_size
+            proc_w, proc_h = image_info.processed_size
+
+            # Save the processed image for frontend display
+            processed_filename = f"processed_{os.path.basename(image_path)}"
+            upload_dir = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
+            processed_path = os.path.join(upload_dir, processed_filename)
+            image_info.image.save(processed_path)
             
             # Calculate number of image patches
             num_image_patches = merged_grid_h * merged_grid_w
@@ -655,73 +658,44 @@ class ModelManager:
                     image_patch_attention = image_patch_attention[:num_image_patches]
             
             # Create patch coordinate mappings for the requested head (backward compatibility)
+            # Bboxes are in processed-image space (1:1 with displayed image)
+            eps = effective_patch_size
             patches = []
             for i in range(merged_grid_h):
                 for j in range(merged_grid_w):
                     patch_idx = i * merged_grid_w + j
                     if patch_idx < len(image_patch_attention):
-                        # Calculate patch coordinates in resized image space
-                        x_start = j * effective_patch_size
-                        y_start = i * effective_patch_size
-                        x_end = min((j + 1) * effective_patch_size, resized_width)
-                        y_end = min((i + 1) * effective_patch_size, resized_height)
-                        
-                        # Scale coordinates back to original image space
-                        scale_x = width / resized_width
-                        scale_y = height / resized_height
-                        
                         patches.append({
                             'patch_idx': patch_idx,
                             'grid_pos': [i, j],
-                            'bbox': [
-                                int(x_start * scale_x),
-                                int(y_start * scale_y),
-                                int(x_end * scale_x),
-                                int(y_end * scale_y)
-                            ],
+                            'bbox': [j * eps, i * eps, (j + 1) * eps, (i + 1) * eps],
                             'attention': float(image_patch_attention[patch_idx])
                         })
-            
+
             # Create patch data for ALL heads
             all_patches = {}
             for head_idx in range(num_heads):
                 head_image_attention = all_heads_attention[head_idx][image_start_idx:image_end_idx + 1]
-                
+
                 # Ensure we have the expected number of image patches for this head
                 if len(head_image_attention) != num_image_patches:
-                    # Pad or truncate as needed
                     if len(head_image_attention) < num_image_patches:
                         head_image_attention = list(head_image_attention) + [0.0] * (num_image_patches - len(head_image_attention))
                     else:
                         head_image_attention = head_image_attention[:num_image_patches]
-                
+
                 head_patches = []
                 for i in range(merged_grid_h):
                     for j in range(merged_grid_w):
                         patch_idx = i * merged_grid_w + j
                         if patch_idx < len(head_image_attention):
-                            # Calculate patch coordinates in resized image space
-                            x_start = j * effective_patch_size
-                            y_start = i * effective_patch_size
-                            x_end = min((j + 1) * effective_patch_size, resized_width)
-                            y_end = min((i + 1) * effective_patch_size, resized_height)
-                            
-                            # Scale coordinates back to original image space
-                            scale_x = width / resized_width
-                            scale_y = height / resized_height
-                            
                             head_patches.append({
                                 'patch_idx': patch_idx,
                                 'grid_pos': [i, j],
-                                'bbox': [
-                                    int(x_start * scale_x),
-                                    int(y_start * scale_y),
-                                    int(x_end * scale_x),
-                                    int(y_end * scale_y)
-                                ],
+                                'bbox': [j * eps, i * eps, (j + 1) * eps, (i + 1) * eps],
                                 'attention': float(head_image_attention[patch_idx])
                             })
-                
+
                 all_patches[head_idx] = head_patches
             
             # Prepare text tokens with attention for ALL tokens in sequence (requested head)
@@ -786,6 +760,7 @@ class ModelManager:
                 'layer': layer,
                 'head': head,
                 'image_url': f'/static/uploads/{filename}',
+                'processed_image_url': f'/static/uploads/{processed_filename}',
                 'task': task,
                 'prefill': assistant_prefill,
                 'attention_data': {
@@ -798,8 +773,7 @@ class ModelManager:
                         'end': image_end_idx
                     },
                     'image_dimensions': {
-                        'original': [width, height],
-                        'resized': [resized_width, resized_height],
+                        'processed': [proc_w, proc_h],
                         'grid': [merged_grid_h, merged_grid_w],
                         'patch_size': effective_patch_size
                     },
@@ -838,12 +812,6 @@ class ModelManager:
         try:
             from PIL import Image
             from vlm_spectra.analysis.logit_lens import compute_logit_lens
-            from vlm_spectra.preprocessing.utils.vision_info import (
-                resolve_patch_params,
-                smart_resize,
-                MIN_PIXELS,
-                MAX_PIXELS,
-            )
 
             image = Image.open(image_path)
             if image.mode != 'RGB':
@@ -901,20 +869,14 @@ class ModelManager:
             )
 
             # Compute vision grid info for image patch highlighting
-            width, height = image.size
-            vision_config = self.model.model.config.vision_config
-            model_name = getattr(self.model, "model_name", None)
-            patch_size, spatial_merge_size = resolve_patch_params(vision_config, model_name)
-            resize_factor = patch_size * spatial_merge_size
-            resized_height, resized_width = smart_resize(
-                height, width, factor=resize_factor,
-                min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS,
-            )
-            grid_h = resized_height // patch_size
-            grid_w = resized_width // patch_size
-            merged_grid_h = grid_h // spatial_merge_size
-            merged_grid_w = grid_w // spatial_merge_size
-            effective_patch_size = patch_size * spatial_merge_size
+            image_info = self.model.process_image(image)
+            proc_w, proc_h = image_info.processed_size
+
+            # Save processed image for frontend display
+            processed_filename = f"processed_{os.path.basename(image_path)}"
+            upload_dir = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
+            processed_path = os.path.join(upload_dir, processed_filename)
+            image_info.image.save(processed_path)
 
             filename = os.path.basename(image_path)
 
@@ -925,18 +887,17 @@ class ModelManager:
                 'num_layers': len(all_top_tokens),
                 'num_positions': len(token_labels),
                 'image_url': f'/static/uploads/{filename}',
+                'processed_image_url': f'/static/uploads/{processed_filename}',
                 'image_token_range': {
                     'start': image_start_idx,
                     'end': image_end_idx,
                 },
                 'grid_info': {
-                    'merged_grid_h': merged_grid_h,
-                    'merged_grid_w': merged_grid_w,
-                    'effective_patch_size': effective_patch_size,
-                    'original_width': width,
-                    'original_height': height,
-                    'resized_width': resized_width,
-                    'resized_height': resized_height,
+                    'merged_grid_h': image_info.grid_h,
+                    'merged_grid_w': image_info.grid_w,
+                    'effective_patch_size': image_info.effective_patch_size,
+                    'processed_width': proc_w,
+                    'processed_height': proc_h,
                 },
                 'inference_time': round(inference_time, 2),
             }
