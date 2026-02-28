@@ -3700,6 +3700,7 @@ dev = [
 ]
 examples = [
     { name = "datasets" },
+    { name = "ipykernel" },
     { name = "matplotlib" },
     { name = "tqdm" },
 ]
@@ -3710,6 +3711,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'examples'", specifier = ">=2.14" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "flask", specifier = ">=2.3.3" },
+    { name = "ipykernel", marker = "extra == 'examples'", specifier = ">=7.1.0" },
     { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
     { name = "matplotlib", marker = "extra == 'examples'", specifier = ">=3.7" },
     { name = "pillow", specifier = ">=11.2.1" },

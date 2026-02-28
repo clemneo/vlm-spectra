@@ -26,6 +26,7 @@ Repository = "https://github.com/clemneo/vlm-spectra"
 
 [project.optional-dependencies]
 examples = [
+    "ipykernel>=7.1.0",
     "matplotlib>=3.7",
     "tqdm>=4.65",
     "datasets>=2.14",
